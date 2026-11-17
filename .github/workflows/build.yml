@@ -77,6 +77,14 @@ jobs:
           }
           # Ensure the Release DLL contains RDSEED/RDRAND only behind CPUID (sanity: opcodes present).
           & $dumpbin.FullName /nologo /disasm "build\x64\Release\foo_true_random.dll" | Select-String -Pattern "\b(rdseed|rdrand|cpuid)\b" | Select-Object -First 20
+      - name: Build integration-test driver component (not shipped)
+        shell: pwsh
+        run: |
+          msbuild foobar2000\foo_true_random\foo_true_random.vcxproj /m /nologo /v:minimal /p:Configuration=Release /p:Platform=x64 /p:FTR_ITEST=true
+          if ($LASTEXITCODE) { exit 1 }
+      - name: Integration test in real foobar2000 v2.26.3 x64 (portable, installs the packaged component)
+        shell: pwsh
+        run: ./scripts/integration-test.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: foo-true-random

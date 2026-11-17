@@ -7,25 +7,16 @@
 #include <string>
 #include <vector>
 
+#include "commands.h"
+#include "guids.h"
 #include "fb2k_backend.h"
 #include "ftr/hardware_rng.h"
 #include "ftr/playlist_logic.h"
 
+namespace ftr_fb2k {
+
+
 namespace {
-
-using ftr_fb2k::handle;
-
-// {2CB9B2A6-E9AB-4D5E-9198-BD321A279FA9}
-const GUID guid_mainmenu_group = {0x2cb9b2a6, 0xe9ab, 0x4d5e, {0x91, 0x98, 0xbd, 0x32, 0x1a, 0x27, 0x9f, 0xa9}};
-// {95D9B1AA-13D8-4BCD-B7AA-C8DD684281E1}
-const GUID guid_cmd_library = {0x95d9b1aa, 0x13d8, 0x4bcd, {0xb7, 0xaa, 0xc8, 0xdd, 0x68, 0x42, 0x81, 0xe1}};
-// {09D264D5-96D2-4E88-BF96-0E6CD7102C28}
-const GUID guid_cmd_current = {0x09d264d5, 0x96d2, 0x4e88, {0xbf, 0x96, 0x0e, 0x6c, 0xd7, 0x10, 0x2c, 0x28}};
-// {AB3271A6-B494-48BF-AAB1-F463CC35F85E}
-const GUID guid_cmd_status = {0xab3271a6, 0xb494, 0x48bf, {0xaa, 0xb1, 0xf4, 0x63, 0xcc, 0x35, 0xf8, 0x5e}};
-// {243C4433-D970-43CC-B3F3-CDB53AEE43A0}
-const GUID guid_ctx_selected = {0x243c4433, 0xd970, 0x43cc, {0xb3, 0xf3, 0xcd, 0xb5, 0x3a, 0xee, 0x43, 0xa0}};
-
 const char* const k_title = "True Random";
 
 void report(const ftr::operation_result& r, const char* what) {
@@ -40,12 +31,16 @@ void report_failure(const char* what, const char* msg) {
     popup_message::g_show(msg, k_title, popup_message::icon_error);
 }
 
-void run_new_playlist(const std::vector<handle>& items, const char* kind, const char* what) {
+}  // namespace
+
+ftr::operation_result run_new_playlist(const std::vector<handle>& items, const char* kind,
+                                       const char* what) {
     ftr::hardware_rng rng(ftr::cpu_instruction_provider());
-    ftr_fb2k::playlist_manager_backend pm;
+    playlist_manager_backend pm;
     const std::string name = std::string("True Random - ") + kind;
     const ftr::operation_result r = ftr::create_shuffled_playlist(pm, rng, items, name);
     report(r, what);
+    return r;
 }
 
 void cmd_entire_library() {
@@ -58,7 +53,7 @@ void cmd_entire_library() {
     metadb_handle_list all;
     lm->get_all_items(all);
     std::vector<handle> items;
-    ftr_fb2k::to_vector(all, items);
+    to_vector(all, items);
     if (items.empty()) {
         report_failure("Entire Media Library", "The Media Library is empty. Nothing was changed.");
         return;
@@ -66,9 +61,19 @@ void cmd_entire_library() {
     run_new_playlist(items, "Library", "Entire Media Library");
 }
 
+void cmd_selected_tracks(metadb_handle_list_cref data) {
+    std::vector<handle> items;
+    to_vector(data, items);  // preserves order and multiplicity as given by the caller
+    if (items.empty()) {
+        report_failure("Selected Tracks", "No tracks are selected. Nothing was changed.");
+        return;
+    }
+    run_new_playlist(items, "Selection", "Selected Tracks");
+}
+
 void cmd_current_playlist() {
     ftr::hardware_rng rng(ftr::cpu_instruction_provider());
-    ftr_fb2k::playlist_manager_backend pm;
+    playlist_manager_backend pm;
     const ftr::operation_result r = ftr::shuffle_playlist_in_place(pm, rng, pm.active_playlist());
     report(r, "Current Playlist");
 }
@@ -101,6 +106,8 @@ void cmd_status() {
     console::print(("foo_true_random: status: " + msg).c_str());
     popup_message::g_show(msg.c_str(), "True Random: Hardware RNG Status");
 }
+
+namespace {
 
 template <class F>
 void guarded(const char* what, F&& f) {
@@ -185,15 +192,7 @@ public:
     void context_command(unsigned p_index, metadb_handle_list_cref p_data, const GUID& p_caller) override {
         (void)p_index;
         (void)p_caller;
-        guarded("Selected Tracks", [&] {
-            std::vector<handle> items;
-            ftr_fb2k::to_vector(p_data, items);  // preserves order and multiplicity as given
-            if (items.empty()) {
-                report_failure("Selected Tracks", "No tracks are selected. Nothing was changed.");
-                return;
-            }
-            run_new_playlist(items, "Selection", "Selected Tracks");
-        });
+        guarded("Selected Tracks", [&] { cmd_selected_tracks(p_data); });
     }
 
     bool context_get_display(unsigned p_index, metadb_handle_list_cref p_data, pfc::string_base& p_out,
@@ -221,3 +220,4 @@ public:
 contextmenu_item_factory_t<true_random_contextmenu> g_contextmenu_factory;
 
 }  // namespace
+}  // namespace ftr_fb2k

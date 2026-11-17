@@ -29,6 +29,11 @@
   <PropertyGroup>
     <FB2K_SDK Condition="'$(FB2K_SDK)'==''">$(MSBuildThisFileDirectory)..\..\external\foobar2000-sdk\</FB2K_SDK>
     <FTR_ROOT>$(MSBuildThisFileDirectory)..\..\</FTR_ROOT>
+    <!-- /p:FTR_ITEST=true builds the separate integration-test component
+         (foo_true_random_itest.dll). It is never packaged or shipped. -->
+    <FTR_ITEST Condition="'$(FTR_ITEST)'==''">false</FTR_ITEST>
+    <FTR_DLL_BASENAME Condition="'$(FTR_ITEST)'!='true'">foo_true_random</FTR_DLL_BASENAME>
+    <FTR_DLL_BASENAME Condition="'$(FTR_ITEST)'=='true'">foo_true_random_itest</FTR_DLL_BASENAME>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
@@ -47,9 +52,9 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup>
-    <TargetName>foo_true_random</TargetName>
+    <TargetName>$(FTR_DLL_BASENAME)</TargetName>
     <OutDir>$(FTR_ROOT)build\$(Platform)\$(Configuration)\</OutDir>
-    <IntDir>$(FTR_ROOT)build\obj\$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
+    <IntDir>$(FTR_ROOT)build\obj\$(Platform)\$(Configuration)\$(FTR_DLL_BASENAME)\</IntDir>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
@@ -89,8 +94,12 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="main.cpp" />
-    <ClCompile Include="commands.cpp" />
+    <!-- Shipped component -->
+    <ClCompile Include="main.cpp" Condition="'$(FTR_ITEST)'!='true'" />
+    <ClCompile Include="commands.cpp" Condition="'$(FTR_ITEST)'!='true'" />
+    <!-- Separate integration-test component: drives the INSTALLED shipped
+         component through foobar2000's menu services. Never packaged. -->
+    <ClCompile Include="itest.cpp" Condition="'$(FTR_ITEST)'=='true'" />
     <ClCompile Include="fb2k_backend.cpp" />
     <ClCompile Include="..\..\src\hardware_rng.cpp" />
     <ClCompile Include="..\..\src\hardware_rng_x86.cpp" />
@@ -98,6 +107,8 @@
   <ItemGroup>
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="fb2k_backend.h" />
+    <ClInclude Include="commands.h" />
+    <ClInclude Include="guids.h" />
     <ClInclude Include="version.h" />
     <ClInclude Include="..\..\include\ftr\random_core.h" />
     <ClInclude Include="..\..\include\ftr\hardware_rng.h" />

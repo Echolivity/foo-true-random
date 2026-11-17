@@ -1,0 +1,20 @@
+// foo_true_random — command identifiers (shared by the component and the
+// integration test, which locates the installed component's commands by GUID).
+// SPDX-License-Identifier: MIT
+#pragma once
+
+#include "stdafx.h"
+
+namespace ftr_fb2k {
+// {2CB9B2A6-E9AB-4D5E-9198-BD321A279FA9}
+inline const GUID guid_mainmenu_group = {0x2cb9b2a6, 0xe9ab, 0x4d5e, {0x91, 0x98, 0xbd, 0x32, 0x1a, 0x27, 0x9f, 0xa9}};
+// {95D9B1AA-13D8-4BCD-B7AA-C8DD684281E1}
+inline const GUID guid_cmd_library = {0x95d9b1aa, 0x13d8, 0x4bcd, {0xb7, 0xaa, 0xc8, 0xdd, 0x68, 0x42, 0x81, 0xe1}};
+// {09D264D5-96D2-4E88-BF96-0E6CD7102C28}
+inline const GUID guid_cmd_current = {0x09d264d5, 0x96d2, 0x4e88, {0xbf, 0x96, 0x0e, 0x6c, 0xd7, 0x10, 0x2c, 0x28}};
+// {AB3271A6-B494-48BF-AAB1-F463CC35F85E}
+inline const GUID guid_cmd_status = {0xab3271a6, 0xb494, 0x48bf, {0xaa, 0xb1, 0xf4, 0x63, 0xcc, 0x35, 0xf8, 0x5e}};
+// {243C4433-D970-43CC-B3F3-CDB53AEE43A0}
+inline const GUID guid_ctx_selected = {0x243c4433, 0xd970, 0x43cc, {0xb3, 0xf3, 0xcd, 0xb5, 0x3a, 0xee, 0x43, 0xa0}};
+
+}  // namespace ftr_fb2k
