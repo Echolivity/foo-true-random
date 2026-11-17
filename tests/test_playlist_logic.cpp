@@ -326,4 +326,25 @@ TEST(in_place_no_active_playlist_and_trivial_sizes) {
     CHECK_EQ(pm.reorders, 0);
 }
 
+TEST(new_playlist_single_track_message_is_clear) {
+    rng_fixture f(true, true);
+    hardware_rng rng(f.m);
+    auto pm = two_playlists();
+    const auto r = create_shuffled_playlist(pm, rng, {"only"}, "True Random");
+    CHECK(r.ok);
+    CHECK((pm.lists.back().items == std::vector<handle>{"only"}));
+    CHECK(r.message.find("Only 1 track") != std::string::npos);
+    CHECK(r.message.find("no hardware random values drawn") == std::string::npos);
+}
+
+TEST(new_playlist_message_reports_source_for_two_or_more) {
+    rng_fixture f(true, true);
+    hardware_rng rng(f.m);
+    auto pm = two_playlists();
+    const auto r = create_shuffled_playlist(pm, rng, make_items(2), "True Random");
+    CHECK(r.ok);
+    CHECK(r.message.find("Randomized 2 tracks") != std::string::npos);
+    CHECK(r.message.find("RDSEED (1 x 64-bit values)") != std::string::npos);
+}
+
 TEST_MAIN("playlist_logic")

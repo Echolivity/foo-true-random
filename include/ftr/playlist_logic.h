@@ -128,8 +128,14 @@ operation_result create_shuffled_playlist(playlist_backend<Handle>& pm, hardware
     pm.set_active_playlist(idx);
     r.ok = true;
     r.playlist_index = idx;
-    r.message = "Randomized " + std::to_string(items.size()) + " track" +
-                (items.size() == 1 ? "" : "s") + " into a new playlist using " + r.rng_usage + ".";
+    if (items.size() == 1) {
+        // A single track has only one possible order: no random values are needed.
+        r.message = "Only 1 track was selected; copied it into a new playlist (a single track has only one "
+                    "possible order, so no random values were needed). Select two or more tracks to randomize.";
+    } else {
+        r.message = "Randomized " + std::to_string(items.size()) + " tracks into a new playlist using " +
+                    r.rng_usage + ".";
+    }
     return r;
 }
 
