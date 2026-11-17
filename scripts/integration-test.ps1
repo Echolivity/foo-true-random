@@ -22,6 +22,35 @@ $ErrorActionPreference = "Stop"
 $Package = (Resolve-Path $Package).Path
 $Driver = (Resolve-Path $Driver).Path
 
+Add-Type @"
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class FtrWin {
+    delegate bool EnumProc(IntPtr h, IntPtr p);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr p);
+    [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr w, EnumProc f, IntPtr p);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+    static string T(IntPtr h) { var s = new StringBuilder(1024); GetWindowText(h, s, 1024); return s.ToString(); }
+    static string C(IntPtr h) { var s = new StringBuilder(256); GetClassName(h, s, 256); return s.ToString(); }
+    public static List<string> Dump(int pid) {
+        var o = new List<string>();
+        EnumWindows((h, p) => {
+            uint wp; GetWindowThreadProcessId(h, out wp);
+            if (wp == pid && IsWindowVisible(h)) {
+                o.Add("window [" + C(h) + "] '" + T(h) + "'");
+                EnumChildWindows(h, (c, q) => { var t = T(c); if (t.Length > 0) o.Add("    [" + C(c) + "] " + t); return true; }, IntPtr.Zero);
+            }
+            return true; }, IntPtr.Zero);
+        return o;
+    }
+}
+"@
+
 function Stop-Fb2k {
     Get-Process foobar2000 -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -like "$InstallDir*" } | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -40,10 +69,13 @@ if (-not (Test-Path $exe)) { throw "foobar2000 was not installed to $InstallDir"
 New-Item -ItemType File -Force -Path (Join-Path $InstallDir "portable_mode_enabled") | Out-Null
 Write-Host "foobar2000 file version: $((Get-Item $exe).VersionInfo.FileVersion)"
 
-# First run initialises the portable profile; then close it.
+# First run initialises the portable profile; then close it gracefully.
 $p = Start-Process -FilePath $exe -PassThru
 Start-Sleep -Seconds 15
-Stop-Fb2k
+[FtrWin]::Dump($p.Id) | ForEach-Object { "first run: $_" }
+Start-Process -FilePath $exe -ArgumentList "/exit" -Wait
+$null = $p.WaitForExit(30000)
+if (-not $p.HasExited) { Write-Host "first run did not exit gracefully; killing"; Stop-Fb2k }
 Start-Sleep -Seconds 2
 $profileDir = @((Join-Path $InstallDir "profile"), $InstallDir) | Where-Object { Test-Path $_ } | Select-Object -First 1
 Write-Host "Profile folder: $profileDir"
@@ -86,7 +118,12 @@ $env:FTR_ITEST_MEDIA = $media
 $p = Start-Process -FilePath $exe -PassThru
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 while (-not $p.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
-if (-not $p.HasExited) { Write-Host "foobar2000 did not exit within $TimeoutSeconds s"; Stop-Fb2k }
+if (-not $p.HasExited) {
+    Write-Host "foobar2000 did not exit within $TimeoutSeconds s. Visible windows of the process:"
+    [FtrWin]::Dump($p.Id) | ForEach-Object { "  $_" }
+    if (Test-Path $report) { "Partial report:"; Get-Content $report }
+    Stop-Fb2k
+}
 Remove-Item Env:FTR_ITEST_REPORT, Env:FTR_ITEST_MEDIA
 
 if (-not (Test-Path $report)) {

@@ -26,15 +26,18 @@
 namespace ftr_fb2k {
 namespace {
 
+// Writes each line immediately (flushed), so a hang still leaves evidence.
 struct reporter {
-    std::vector<std::string> lines;
+    std::ofstream out;
     int failures = 0;
     int checks = 0;
-    void info(const std::string& s) { lines.push_back("  " + s); }
+    explicit reporter(const char* path) : out(path, std::ios::binary | std::ios::app) {}
+    void line(const std::string& s) { out << s << "\n" << std::flush; }
+    void info(const std::string& s) { line("  " + s); }
     void check(bool ok, const std::string& what) {
         ++checks;
         if (!ok) ++failures;
-        lines.push_back(std::string(ok ? "[PASS] " : "[FAIL] ") + what);
+        line(std::string(ok ? "[PASS] " : "[FAIL] ") + what);
     }
 };
 
@@ -301,24 +304,29 @@ void run_tests(reporter& r, const char* media_dir) {
 void run_and_exit() {
     const char* report_path = std::getenv("FTR_ITEST_REPORT");
     const char* media = std::getenv("FTR_ITEST_MEDIA");
-    reporter r;
-    try {
-        run_tests(r, media ? media : "C:\\ftr-itest-media");
-    } catch (const std::exception& e) {
-        r.check(false, std::string("exception: ") + e.what());
+    {
+        reporter r(report_path);
+        r.line("driver running on main thread");
+        try {
+            run_tests(r, media ? media : "C:\\ftr-itest-media");
+        } catch (const std::exception& e) {
+            r.check(false, std::string("exception: ") + e.what());
+        }
+        r.line(std::string("RESULT: ") + (r.failures == 0 ? "PASS" : "FAIL") + " (" + std::to_string(r.checks) +
+               " checks, " + std::to_string(r.failures) + " failed)");
     }
-    std::ofstream f(report_path, std::ios::binary | std::ios::trunc);
-    for (auto& l : r.lines) f << l << "\n";
-    f << "RESULT: " << (r.failures == 0 ? "PASS" : "FAIL") << " (" << r.checks << " checks, " << r.failures
-      << " failed)\n";
-    f.close();
     standard_commands::main_exit();
 }
 
 class itest_initquit : public initquit {
 public:
     void on_init() override {
-        if (std::getenv("FTR_ITEST_REPORT") == nullptr) return;  // inert unless explicitly requested
+        const char* path = std::getenv("FTR_ITEST_REPORT");
+        if (path == nullptr) return;  // inert unless explicitly requested
+        {
+            std::ofstream f(path, std::ios::binary | std::ios::trunc);
+            f << "driver on_init reached\n";  // progress marker for diagnostics
+        }
         fb2k::inMainThread([] { run_and_exit(); });
     }
 };
