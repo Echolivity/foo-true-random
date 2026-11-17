@@ -90,7 +90,7 @@ core_status make_permutation(Source& source, std::size_t n, std::vector<std::siz
     // Bounds are i+1 for i in [1, n-1], so the largest bound is n; it must be
     // representable in Word.
     if (static_cast<std::uintmax_t>(n) >
-        static_cast<std::uintmax_t>(std::numeric_limits<Word>::max())) {
+        static_cast<std::uintmax_t>((std::numeric_limits<Word>::max)())) {
         return core_status::too_many_items;
     }
     std::vector<std::size_t> work(n);
