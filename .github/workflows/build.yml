@@ -6,6 +6,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Create a GitHub release with this tag (e.g. v1.0.0) from the tested build. Leave empty for a plain build."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -93,8 +98,8 @@ jobs:
             build/x64/Release/foo_true_random.pdb
 
   release:
-    name: Publish GitHub release (tags v*)
-    if: startsWith(github.ref, 'refs/tags/v')
+    name: Publish GitHub release (tags v*, or manual dispatch with release_tag)
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: [core-linux, windows]
     runs-on: ubuntu-24.04
     permissions:
@@ -116,4 +121,7 @@ jobs:
             echo "SHA-256 of foo-true-random.fb2k-component: \`$(sha256sum "$pkg" | cut -d' ' -f1)\`"
             echo
             awk '/^## /{n++} n==1' CHANGELOG.md ) > notes.md
-          gh release create "${GITHUB_REF_NAME}" "$pkg" --title "foo-true-random ${GITHUB_REF_NAME}" --notes-file notes.md
+          tag="${{ inputs.release_tag }}"
+          if [ -z "$tag" ]; then tag="${GITHUB_REF_NAME}"; fi
+          # --target creates the tag at the exact commit that was just built and tested.
+          gh release create "$tag" "$pkg" --target "${GITHUB_SHA}" --title "foo-true-random $tag" --notes-file notes.md
