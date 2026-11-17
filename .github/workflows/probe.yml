@@ -2,7 +2,7 @@ name: sdk-probe
 on: push
 jobs:
   probe:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - name: Fetch SDK
         shell: pwsh
@@ -13,14 +13,17 @@ jobs:
         shell: bash
         run: |
           cd sdk
-          echo "=====LIST"; find . -type f | grep -v '\.xcodeproj' | sort
-          for f in $(find . -iname '*readme*' -o -iname 'sdk-license*' -o -iname '*.txt' | grep -v pfc/ | head -10) \
-            foobar2000/SDK/playlist.h foobar2000/SDK/library_manager.h foobar2000/SDK/menu.h foobar2000/SDK/mainmenu.h \
-            foobar2000/SDK/menu_helpers.h foobar2000/SDK/contextmenu.h foobar2000/SDK/popup_message.h foobar2000/SDK/componentversion.h \
-            foobar2000/SDK/console.h foobar2000/foo_sample/foo_sample.vcxproj foobar2000/foo_sample/mainmenu.cpp \
-            foobar2000/foo_sample/contextmenu.cpp foobar2000/foo_sample/main.cpp foobar2000/foo_sample/stdafx.h foobar2000/foo_sample/initquit.cpp \
-            pfc/bit_array_impl.h pfc/bit_array.h foobar2000/SDK/foobar2000.h foobar2000/SDK/foobar2000-lite.h; do
-            [ -f "$f" ] && { echo "=====FILE $f"; cat "$f"; }
-          done
-          echo "=====GREP"; grep -rn "fb2k-component\|VALIDATE_COMPONENT_FILENAME\|FOOBAR2000_TARGET_VERSION" --include=*.h --include=*.txt --include=*.html . | head -40
-          cat foobar2000/foo_sample/*.vcxproj.filters | head -5 >/dev/null || true
+          grep -n "handle_create\|class make_playable_location\|make_playable_location(" foobar2000/SDK/metadb.h foobar2000/SDK/playable_location.h | head -20
+          grep -rn "inMainThread\|main_thread_callback_add\|callInMainThread" foobar2000/SDK/*.h | head -20
+          grep -n "main_exit\|static.*run_main" foobar2000/SDK/menu_helpers.h foobar2000/SDK/*.h | head -10
+          grep -n "class NOVTABLE initquit\|on_init\|on_quit\|class initquit" foobar2000/SDK/initquit.h
+          grep -n "g_execute\|static bool g_find_by_name\|g_execute_dynamic" foobar2000/SDK/menu.h | head
+          grep -n "playlist_undo_restore\|playlist_is_undo_available\|playlist_clear\|playlist_add_items\|activeplaylist_set_selection" foobar2000/SDK/playlist.h | head
+          grep -rn "reorder" pfc/list.h pfc/sort.h pfc/primitives.h 2>/dev/null | head -30
+          grep -n "sort_get_permutation" -A6 pfc/*.h | head -30
+          echo ===== cmdline; grep -rn "runcmd\|/command:" foobar2000/SDK/*.h | head
+      - name: fb2k download page
+        shell: pwsh
+        run: |
+          $p = Invoke-WebRequest -UseBasicParsing https://www.foobar2000.org/download
+          $p.Links | ForEach-Object { $_.href } | Where-Object { $_ -match 'getfile|exe|zip' }
