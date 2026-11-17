@@ -1,0 +1,35 @@
+name: sdk-probe
+on: push
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - name: Find and fetch SDK
+        shell: pwsh
+        run: |
+          $page = Invoke-WebRequest -UseBasicParsing https://www.foobar2000.org/SDK
+          $page.Links | Where-Object { $_.href -match 'SDK' } | ForEach-Object { $_.href }
+          $l = $page.Links | Where-Object { $_.href -match 'SDK-2026-10-01' } | Select-Object -First 1
+          if (-not $l) { throw "SDK-2026-10-01 not linked" }
+          $u = $l.href; if ($u -notmatch '^https?:') { $u = "https://www.foobar2000.org" + ($(if ($u.StartsWith('/')) {''} else {'/'})) + $u }
+          "URL: $u"
+          Invoke-WebRequest -UseBasicParsing $u -OutFile sdk.7z
+          (Get-FileHash sdk.7z -Algorithm SHA256).Hash
+          7z x sdk.7z -osdk | Out-Null
+      - name: Tree
+        shell: bash
+        run: |
+          cd sdk; find . -maxdepth 3 | sort | head -300
+          find . -name '*.vcxproj' -o -name '*.sln' -o -name '*.lib' | sort
+      - name: Upload SDK headers
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-headers
+          path: |
+            sdk/**/*.h
+            sdk/**/*.vcxproj
+            sdk/**/*.sln
+            sdk/**/*.txt
+            sdk/**/*.html
+            sdk/**/*.props
+            sdk/foobar2000/foo_sample/*.cpp
