@@ -4,32 +4,23 @@ jobs:
   probe:
     runs-on: windows-latest
     steps:
-      - name: Find and fetch SDK
+      - name: Fetch SDK
         shell: pwsh
         run: |
-          $page = Invoke-WebRequest -UseBasicParsing https://www.foobar2000.org/SDK
-          $page.Links | Where-Object { $_.href -match 'SDK' } | ForEach-Object { $_.href }
-          $l = $page.Links | Where-Object { $_.href -match 'SDK-2026-10-01' } | Select-Object -First 1
-          if (-not $l) { throw "SDK-2026-10-01 not linked" }
-          $u = $l.href; if ($u -notmatch '^https?:') { $u = "https://www.foobar2000.org" + ($(if ($u.StartsWith('/')) {''} else {'/'})) + $u }
-          "URL: $u"
-          Invoke-WebRequest -UseBasicParsing $u -OutFile sdk.7z
-          (Get-FileHash sdk.7z -Algorithm SHA256).Hash
+          Invoke-WebRequest -UseBasicParsing https://www.foobar2000.org/downloads/SDK-2026-10-01.7z -OutFile sdk.7z
           7z x sdk.7z -osdk | Out-Null
-      - name: Tree
+      - name: Dump
         shell: bash
         run: |
-          cd sdk; find . -maxdepth 3 | sort | head -300
-          find . -name '*.vcxproj' -o -name '*.sln' -o -name '*.lib' | sort
-      - name: Upload SDK headers
-        uses: actions/upload-artifact@v4
-        with:
-          name: sdk-headers
-          path: |
-            sdk/**/*.h
-            sdk/**/*.vcxproj
-            sdk/**/*.sln
-            sdk/**/*.txt
-            sdk/**/*.html
-            sdk/**/*.props
-            sdk/foobar2000/foo_sample/*.cpp
+          cd sdk
+          echo "=====LIST"; find . -type f | grep -v '\.xcodeproj' | sort
+          for f in $(find . -iname '*readme*' -o -iname 'sdk-license*' -o -iname '*.txt' | grep -v pfc/ | head -10) \
+            foobar2000/SDK/playlist.h foobar2000/SDK/library_manager.h foobar2000/SDK/menu.h foobar2000/SDK/mainmenu.h \
+            foobar2000/SDK/menu_helpers.h foobar2000/SDK/contextmenu.h foobar2000/SDK/popup_message.h foobar2000/SDK/componentversion.h \
+            foobar2000/SDK/console.h foobar2000/foo_sample/foo_sample.vcxproj foobar2000/foo_sample/mainmenu.cpp \
+            foobar2000/foo_sample/contextmenu.cpp foobar2000/foo_sample/main.cpp foobar2000/foo_sample/stdafx.h foobar2000/foo_sample/initquit.cpp \
+            pfc/bit_array_impl.h pfc/bit_array.h foobar2000/SDK/foobar2000.h foobar2000/SDK/foobar2000-lite.h; do
+            [ -f "$f" ] && { echo "=====FILE $f"; cat "$f"; }
+          done
+          echo "=====GREP"; grep -rn "fb2k-component\|VALIDATE_COMPONENT_FILENAME\|FOOBAR2000_TARGET_VERSION" --include=*.h --include=*.txt --include=*.html . | head -40
+          cat foobar2000/foo_sample/*.vcxproj.filters | head -5 >/dev/null || true
