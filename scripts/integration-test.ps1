@@ -13,6 +13,8 @@
 #   ./scripts/integration-test.ps1
 param(
     [string]$Fb2kVersion = "2.26.3",
+    # SHA-256 of foobar2000-x64_v2.26.3.exe as downloaded from foobar2000.org on 2026-11-17.
+    [string]$Fb2kSha256 = "B8A92891013D3AF81EE7B51393E85E963DC099E7E4958F8CF392BFA252425183",
     [string]$InstallDir = "C:\ftr-fb2k-itest",
     [string]$Package = (Join-Path $PSScriptRoot "..\dist\foo-true-random.fb2k-component"),
     [string]$Driver = (Join-Path $PSScriptRoot "..\build\x64\Release\foo_true_random_itest.dll"),
@@ -61,7 +63,9 @@ $installer = Join-Path ([System.IO.Path]::GetTempPath()) "foobar2000-x64_v$Fb2kV
 if (-not (Test-Path $installer)) {
     Invoke-WebRequest -UseBasicParsing "https://www.foobar2000.org/downloads/foobar2000-x64_v$Fb2kVersion.exe" -OutFile $installer
 }
-Write-Host "Installer SHA-256: $((Get-FileHash $installer -Algorithm SHA256).Hash)"
+$installerHash = (Get-FileHash $installer -Algorithm SHA256).Hash
+Write-Host "Installer SHA-256: $installerHash"
+if ($Fb2kVersion -eq "2.26.3" -and $installerHash -ne $Fb2kSha256) { throw "foobar2000 installer hash mismatch (expected $Fb2kSha256)" }
 if (Test-Path $InstallDir) { Stop-Fb2k; Remove-Item -Recurse -Force $InstallDir }
 Start-Process -Wait -FilePath $installer -ArgumentList "/S", "/D=$InstallDir"
 $exe = Join-Path $InstallDir "foobar2000.exe"

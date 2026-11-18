@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -108,16 +109,22 @@ bool find_context_item(const GUID& g, service_ptr_t<contextmenu_item>& out, unsi
 // Backend wrapper used to inject failures on top of the REAL playlist_manager.
 class failing_backend : public ftr::playlist_backend<handle> {
 public:
-    enum class mode { fail_append, partial_append };
+    enum class mode { fail_append, partial_append, throw_after_partial };
     explicit failing_backend(mode m) : m_mode(m) {}
     std::size_t playlist_count() override { return m_real.playlist_count(); }
     std::size_t active_playlist() override { return m_real.active_playlist(); }
     void set_active_playlist(std::size_t i) override { m_real.set_active_playlist(i); }
+    std::string playlist_name(std::size_t i) override { return m_real.playlist_name(i); }
     std::size_t create_playlist(const std::string& n) override { return m_real.create_playlist(n); }
     bool remove_playlist(std::size_t i) override { return m_real.remove_playlist(i); }
     void get_items(std::size_t p, std::vector<handle>& o) override { m_real.get_items(p, o); }
     bool append_items(std::size_t p, const std::vector<handle>& items) override {
         if (m_mode == mode::fail_append) return false;
+        if (m_mode == mode::throw_after_partial) {
+            std::vector<handle> one(items.begin(), items.begin() + 1);
+            m_real.append_items(p, one);  // really inserts into the real playlist...
+            throw std::runtime_error("simulated failure after partial insert");  // ...then fails
+        }
         std::vector<handle> half(items.begin(), items.begin() + static_cast<std::ptrdiff_t>(items.size() / 2));
         return m_real.append_items(p, half);  // really inserts half, reports success
     }
@@ -215,7 +222,14 @@ void run_tests(reporter& r, const char* media_dir) {
             r.check(same_multiset(out, tracks), "Selected Tracks: identical track identities incl. 3x duplicate");
             r.check(!same_order(out, tracks), "Selected Tracks: order differs from input");
             r.check(pm->get_active_playlist() == np, "Selected Tracks: new playlist activated");
-            pfc::bit_array_one m(np);
+            // Running it again must not create a second playlist with an identical name.
+            ctx->item_execute_simple(ctx_index, pfc::guid_null, sel, contextmenu_item::caller_active_playlist_selection);
+            pfc::string8 name2;
+            pm->playlist_get_name(pm->get_playlist_count() - 1, name2);
+            r.check(pm->get_playlist_count() == count_before + 2 &&
+                        std::string(name2.c_str()) == "True Random - Selection (2)",
+                    "Selected Tracks again: second playlist named 'True Random - Selection (2)'");
+            pfc::bit_array_range m(np, 2);
             pm->remove_playlists(m);
         } else {
             r.check(pm->get_playlist_count() == count_before, "Selected Tracks without hardware RNG: no playlist created");
@@ -273,15 +287,23 @@ void run_tests(reporter& r, const char* media_dir) {
     }
 
     // ---- rollback on the real playlist_manager
-    for (auto mode : {failing_backend::mode::fail_append, failing_backend::mode::partial_append}) {
-        const char* label = mode == failing_backend::mode::fail_append ? "insert refused" : "partial insert";
+    for (auto mode : {failing_backend::mode::fail_append, failing_backend::mode::partial_append,
+                      failing_backend::mode::throw_after_partial}) {
+        const char* label = mode == failing_backend::mode::fail_append      ? "insert refused"
+                            : mode == failing_backend::mode::partial_append ? "partial insert"
+                                                                            : "exception after partial insert";
         const std::size_t anchor = add_playlist("itest anchor", {tracks[0]});
         pm->set_active_playlist(anchor);
         const std::size_t count_before = pm->get_playlist_count();
         failing_backend fb(mode);
         ftr::hardware_rng rng(ftr::cpu_instruction_provider());
-        const auto res = ftr::create_shuffled_playlist(fb, rng, tracks, "itest rollback");
-        r.check(!res.ok, std::string("Rollback (") + label + "): operation reports failure");
+        bool failed = false;
+        try {
+            failed = !ftr::create_shuffled_playlist(fb, rng, tracks, "itest rollback").ok;
+        } catch (const std::exception&) {
+            failed = true;  // the command layer reports this to the user
+        }
+        r.check(failed, std::string("Rollback (") + label + "): operation reports failure");
         r.check(pm->get_playlist_count() == count_before, std::string("Rollback (") + label + "): no partial playlist left");
         r.check(pm->get_active_playlist() == anchor, std::string("Rollback (") + label + "): active playlist restored");
         pfc::bit_array_one m(anchor);

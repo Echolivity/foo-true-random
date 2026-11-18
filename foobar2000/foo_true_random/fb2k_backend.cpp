@@ -24,6 +24,12 @@ void playlist_manager_backend::set_active_playlist(std::size_t index) {
     m_pm->set_active_playlist(index);  // infinite => no active playlist
 }
 
+std::string playlist_manager_backend::playlist_name(std::size_t index) {
+    pfc::string8 name;
+    if (!m_pm->playlist_get_name(index, name)) return {};
+    return name.c_str();
+}
+
 std::size_t playlist_manager_backend::create_playlist(const std::string& name) {
     // p_name_length = SIZE_MAX: null-terminated. p_index = SIZE_MAX: append at end.
     // Returns the new index, or infinite on failure.

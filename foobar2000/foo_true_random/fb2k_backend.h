@@ -23,6 +23,7 @@ public:
     std::size_t playlist_count() override;
     std::size_t active_playlist() override;
     void set_active_playlist(std::size_t index) override;
+    std::string playlist_name(std::size_t index) override;
     std::size_t create_playlist(const std::string& name) override;
     bool remove_playlist(std::size_t index) override;
     void get_items(std::size_t playlist, std::vector<handle>& out) override;

@@ -27,6 +27,8 @@ public:
     virtual std::size_t playlist_count() = 0;
     virtual std::size_t active_playlist() = 0;                 // npos if none
     virtual void set_active_playlist(std::size_t index) = 0;   // npos for none
+    // Name of a playlist (empty on failure).
+    virtual std::string playlist_name(std::size_t index) = 0;
     // Create a playlist at the end; returns its index or npos on failure.
     virtual std::size_t create_playlist(const std::string& name) = 0;
     // Remove exactly one playlist; returns success.
@@ -75,13 +77,107 @@ bool shuffle_items(hardware_rng& rng, const std::vector<Handle>& items, std::vec
     return true;
 }
 
+// ASCII case-insensitive equality (foobar2000 playlist names are compared
+// case-insensitively by its own find_playlist helper).
+inline bool names_equal(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t k = 0; k < a.size(); ++k) {
+        char x = a[k], y = b[k];
+        if (x >= 'A' && x <= 'Z') x = static_cast<char>(x - 'A' + 'a');
+        if (y >= 'A' && y <= 'Z') y = static_cast<char>(y - 'A' + 'a');
+        if (x != y) return false;
+    }
+    return true;
+}
+
+// Returns `base` if no playlist has that name, otherwise "base (2)", "base (3)", ...
+// Existing playlists are never reused or overwritten.
+template <class Handle>
+std::string unique_playlist_name(playlist_backend<Handle>& pm, const std::string& base) {
+    std::vector<std::string> names;
+    const std::size_t count = pm.playlist_count();
+    names.reserve(count);
+    for (std::size_t k = 0; k < count; ++k) names.push_back(pm.playlist_name(k));
+    auto taken = [&](const std::string& n) {
+        for (const auto& e : names)
+            if (names_equal(e, n)) return true;
+        return false;
+    };
+    if (!taken(base)) return base;
+    // count + 2 candidates cannot all be taken by count playlists.
+    for (std::size_t k = 2; k <= count + 2; ++k) {
+        std::string n = base + " (" + std::to_string(k) + ")";
+        if (!taken(n)) return n;
+    }
+    return base;  // unreachable
+}
+
+// Owns a playlist created by create_shuffled_playlist until commit().
+// rollback() runs explicitly on ordinary failures and from the destructor if an
+// exception escapes, so no partially populated playlist is left behind.
+// It only removes the playlist after confirming it is still the one we created
+// (same playlist count, same index, same name): if another component changed
+// the playlist list in between, it removes nothing rather than risk deleting a
+// user's playlist.
+template <class Handle>
+class created_playlist_guard {
+public:
+    created_playlist_guard(playlist_backend<Handle>& pm, std::size_t prev_active)
+        : m_pm(pm), m_prev_active(prev_active) {}
+    created_playlist_guard(const created_playlist_guard&) = delete;
+    created_playlist_guard& operator=(const created_playlist_guard&) = delete;
+    ~created_playlist_guard() {
+        if (m_armed) {
+            try {
+                rollback();
+            } catch (...) {
+                // Destructor must not throw; the caller reports the original failure.
+            }
+        }
+    }
+    // Call immediately after the playlist was created. Armed first, so that if
+    // a query below throws, the destructor still attempts (safe) cleanup.
+    void arm(std::size_t index, const std::string& requested_name) {
+        m_armed = true;
+        m_index = index;
+        m_name = requested_name;
+        m_count_after_create = m_pm.playlist_count();
+        m_name = m_pm.playlist_name(index);  // the name as actually stored by the host
+    }
+    void commit() noexcept { m_armed = false; }
+    // Returns true if the created playlist was removed (or none was created).
+    bool rollback() {
+        if (!m_armed) return true;
+        m_armed = false;
+        bool removed = false;
+        if (m_pm.playlist_count() == m_count_after_create && m_index < m_count_after_create &&
+            m_pm.playlist_name(m_index) == m_name) {
+            removed = m_pm.remove_playlist(m_index);
+        }
+        // We created at the end, so prev_active (< index) is unaffected by the removal.
+        if (m_pm.active_playlist() != m_prev_active) m_pm.set_active_playlist(m_prev_active);
+        return removed;
+    }
+
+private:
+    playlist_backend<Handle>& m_pm;
+    std::size_t m_prev_active;
+    std::size_t m_index = npos;
+    std::size_t m_count_after_create = 0;
+    std::string m_name;
+    bool m_armed = false;
+};
+
 // Operations 5.1 (library) and 5.3 (selection): shuffle `items` into a new
-// playlist named `name`.
+// playlist named `name` (or "name (2)" etc. if that name is taken).
 //
-// Transaction: the complete shuffled sequence is computed first. Only then is
-// a playlist created. If creation, insertion, or verification fails, the new
-// playlist is removed and the previously active playlist is restored, so no
-// partial playlist and no unexpected active-playlist change remain.
+// Failure safety: the complete shuffled sequence is computed first; if the
+// hardware RNG fails, foobar2000 is never touched. After creating the playlist,
+// insertion is verified element by element. If insertion or verification fails,
+// or an exception escapes, the new playlist is removed (see
+// created_playlist_guard) and the previously active playlist is restored.
+// This is compensating rollback, not an atomic transaction: other components
+// can observe the new playlist briefly before it is removed.
 template <class Handle>
 operation_result create_shuffled_playlist(playlist_backend<Handle>& pm, hardware_rng& rng,
                                           const std::vector<Handle>& items,
@@ -102,12 +198,15 @@ operation_result create_shuffled_playlist(playlist_backend<Handle>& pm, hardware
     r.rng_usage = rng.usage_summary();
 
     const std::size_t prev_active = pm.active_playlist();
-    const std::size_t idx = pm.create_playlist(name);
+    const std::string final_name = unique_playlist_name(pm, name);
+    created_playlist_guard<Handle> guard(pm, prev_active);
+    const std::size_t idx = pm.create_playlist(final_name);
     if (idx == npos) {
         if (pm.active_playlist() != prev_active) pm.set_active_playlist(prev_active);
         r.message = "Could not create a new playlist. Nothing was changed.";
         return r;
     }
+    guard.arm(idx, final_name);
     bool inserted = pm.append_items(idx, shuffled);
     if (inserted) {
         std::vector<Handle> check;
@@ -115,27 +214,25 @@ operation_result create_shuffled_playlist(playlist_backend<Handle>& pm, hardware
         inserted = (check == shuffled);
     }
     if (!inserted) {
-        // Roll back: remove the incomplete playlist. Removing a playlist before
-        // the previously active one shifts its index; we created at the end, so
-        // prev_active (< idx) is unaffected.
-        const bool removed = pm.remove_playlist(idx);
-        if (pm.active_playlist() != prev_active) pm.set_active_playlist(prev_active);
-        r.message = removed ? "Inserting tracks failed; the incomplete playlist was removed."
-                            : "Inserting tracks failed and the incomplete playlist could not be "
-                              "removed automatically. Please delete it manually.";
+        const bool removed = guard.rollback();
+        r.message = removed ? "Inserting tracks failed; the incomplete playlist was removed. Nothing else was changed."
+                            : "Inserting tracks failed and the incomplete playlist \"" + final_name +
+                                  "\" could not be removed safely. Please delete it manually.";
         return r;
     }
-    pm.set_active_playlist(idx);
+    guard.commit();
     r.ok = true;
     r.playlist_index = idx;
     if (items.size() == 1) {
         // A single track has only one possible order: no random values are needed.
-        r.message = "Only 1 track was selected; copied it into a new playlist (a single track has only one "
-                    "possible order, so no random values were needed). Select two or more tracks to randomize.";
+        r.message = "Copied 1 track into new playlist \"" + final_name +
+                    "\" (a single track has only one possible order, so no random values were needed).";
     } else {
-        r.message = "Randomized " + std::to_string(items.size()) + " tracks into a new playlist using " +
-                    r.rng_usage + ".";
+        r.message = "Randomized " + std::to_string(items.size()) + " tracks into new playlist \"" + final_name +
+                    "\" using " + r.rng_usage + ".";
     }
+    pm.set_active_playlist(idx);
+    if (pm.active_playlist() != idx) r.message += " (The new playlist could not be activated; select it manually.)";
     return r;
 }
 

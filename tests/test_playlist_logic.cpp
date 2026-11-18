@@ -4,6 +4,7 @@
 // (new[k] = old[order[k]]), locks and an undo stack.
 // SPDX-License-Identifier: MIT
 #include <algorithm>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -35,11 +36,18 @@ struct fake_pm : playlist_backend<handle> {
     bool fail_remove = false;
     bool fail_reorder = false;
     bool create_changes_active = false;  // simulate a core that activates new playlists
+    bool throw_in_append = false;        // SDK call throws after the playlist exists
+    bool throw_in_get_items = false;     // verification read throws
+    bool foreign_insert_during_append = false;  // another component adds a playlist at index 0
+    bool ignore_activation = false;      // set_active_playlist has no effect
     int creates = 0, removes = 0, reorders = 0;
 
     std::size_t playlist_count() override { return lists.size(); }
     std::size_t active_playlist() override { return active; }
-    void set_active_playlist(std::size_t i) override { active = i; }
+    void set_active_playlist(std::size_t i) override {
+        if (!ignore_activation) active = i;
+    }
+    std::string playlist_name(std::size_t i) override { return i < lists.size() ? lists[i].name : std::string(); }
     std::size_t create_playlist(const std::string& name) override {
         ++creates;
         if (fail_create) return npos;
@@ -55,8 +63,21 @@ struct fake_pm : playlist_backend<handle> {
         else if (active != npos && active > i) --active;
         return true;
     }
-    void get_items(std::size_t i, std::vector<handle>& out) override { out = lists.at(i).items; }
+    void get_items(std::size_t i, std::vector<handle>& out) override {
+        if (throw_in_get_items && i == lists.size() - 1) throw std::runtime_error("simulated read failure");
+        out = lists.at(i).items;
+    }
     bool append_items(std::size_t i, const std::vector<handle>& items) override {
+        if (foreign_insert_during_append) {
+            lists.insert(lists.begin(), pl{"Foreign", {"f"}, {}, false});
+            if (active != npos) ++active;
+            ++i;
+            return false;  // and the insert into ours fails
+        }
+        if (throw_in_append) {
+            lists.at(i).items.push_back(items.front());  // partially populated, then throws
+            throw std::runtime_error("simulated out of memory");
+        }
         if (fail_append) return false;
         auto& v = lists.at(i).items;
         if (partial_append) {
@@ -333,7 +354,7 @@ TEST(new_playlist_single_track_message_is_clear) {
     const auto r = create_shuffled_playlist(pm, rng, {"only"}, "True Random");
     CHECK(r.ok);
     CHECK((pm.lists.back().items == std::vector<handle>{"only"}));
-    CHECK(r.message.find("Only 1 track") != std::string::npos);
+    CHECK(r.message.find("Copied 1 track") != std::string::npos);
     CHECK(r.message.find("no hardware random values drawn") == std::string::npos);
 }
 
@@ -345,6 +366,116 @@ TEST(new_playlist_message_reports_source_for_two_or_more) {
     CHECK(r.ok);
     CHECK(r.message.find("Randomized 2 tracks") != std::string::npos);
     CHECK(r.message.find("RDSEED (1 x 64-bit values)") != std::string::npos);
+}
+
+// ------------------------------------------------- audit hardening (1.0.2)
+
+TEST(new_playlist_exception_after_create_rolls_back) {
+    rng_fixture f(true, true);
+    hardware_rng rng(f.m);
+    auto pm = two_playlists();
+    pm.active = 1;
+    pm.throw_in_append = true;
+    bool threw = false;
+    try {
+        (void)create_shuffled_playlist(pm, rng, make_items(10), "True Random");
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    CHECK(threw);                                // the error still reaches the command layer
+    CHECK_EQ(pm.lists.size(), std::size_t(2));   // partially populated playlist removed
+    CHECK_EQ(pm.active, std::size_t(1));
+    CHECK(pm.lists[0].items == make_items(5));
+}
+
+TEST(new_playlist_exception_in_verification_rolls_back) {
+    rng_fixture f(true, true);
+    hardware_rng rng(f.m);
+    auto pm = two_playlists();
+    pm.throw_in_get_items = true;
+    bool threw = false;
+    try {
+        (void)create_shuffled_playlist(pm, rng, make_items(10), "True Random");
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    CHECK(threw);
+    CHECK_EQ(pm.lists.size(), std::size_t(2));
+    CHECK_EQ(pm.active, std::size_t(0));
+}
+
+TEST(rollback_never_removes_a_foreign_playlist) {
+    rng_fixture f(true, true);
+    hardware_rng rng(f.m);
+    auto pm = two_playlists();
+    pm.foreign_insert_during_append = true;
+    const auto r = create_shuffled_playlist(pm, rng, make_items(10), "True Random");
+    CHECK(!r.ok);
+    // Indices shifted under us: nothing may be removed blindly.
+    CHECK_EQ(pm.removes, 0);
+    CHECK_EQ(pm.lists.size(), std::size_t(4));
+    CHECK(pm.lists[0].name == "Foreign");
+    CHECK(pm.lists[1].items == make_items(5));
+    CHECK(r.message.find("could not be removed safely") != std::string::npos);
+}
+
+TEST(new_playlist_name_collision_gets_number) {
+    rng_fixture f(true, true);
+    hardware_rng rng(f.m);
+    auto pm = two_playlists();
+    auto r1 = create_shuffled_playlist(pm, rng, make_items(3), "True Random - Library");
+    auto r2 = create_shuffled_playlist(pm, rng, make_items(3), "True Random - Library");
+    pm.lists.push_back({"true random - library (3)", {}, {}, false});  // case-insensitive clash
+    auto r3 = create_shuffled_playlist(pm, rng, make_items(3), "True Random - Library");
+    CHECK(r1.ok && r2.ok && r3.ok);
+    CHECK(pm.lists[2].name == "True Random - Library");
+    CHECK(pm.lists[3].name == "True Random - Library (2)");
+    CHECK(pm.lists[5].name == "True Random - Library (4)");
+    CHECK(r2.message.find("\"True Random - Library (2)\"") != std::string::npos);
+    // Existing playlists were never reused or modified.
+    CHECK_EQ(pm.lists[2].items.size(), std::size_t(3));
+}
+
+TEST(names_equal_is_ascii_case_insensitive) {
+    CHECK(names_equal("Abc", "aBC"));
+    CHECK(!names_equal("Abc", "Abd"));
+    CHECK(!names_equal("Abc", "Abcd"));
+}
+
+TEST(activation_failure_is_reported_not_hidden) {
+    rng_fixture f(true, true);
+    hardware_rng rng(f.m);
+    auto pm = two_playlists();
+    pm.ignore_activation = true;
+    const auto r = create_shuffled_playlist(pm, rng, make_items(4), "True Random");
+    CHECK(r.ok);  // the playlist is complete and correct
+    CHECK_EQ(pm.lists.size(), std::size_t(3));
+    CHECK(r.message.find("could not be activated") != std::string::npos);
+}
+
+TEST(single_track_message_is_source_neutral) {
+    rng_fixture f(true, true);
+    hardware_rng rng(f.m);
+    auto pm = two_playlists();
+    const auto r = create_shuffled_playlist(pm, rng, {"only"}, "True Random - Library");
+    CHECK(r.ok);
+    CHECK(r.message.find("selected") == std::string::npos);  // was wrong for the library command
+    CHECK(r.message.find("Copied 1 track") != std::string::npos);
+}
+
+TEST(large_input_new_playlist_and_in_place) {
+    rng_fixture f(true, true);
+    hardware_rng rng(f.m);
+    fake_pm pm;
+    pm.lists.push_back({"Big", make_items(50000), {}, false});
+    pm.active = 0;
+    const auto r1 = shuffle_playlist_in_place(pm, rng, 0);
+    CHECK(r1.ok);
+    CHECK(sorted(pm.lists[0].items) == sorted(make_items(50000)));
+    const auto r2 = create_shuffled_playlist(pm, rng, make_items(50000), "True Random - Library");
+    CHECK(r2.ok);
+    CHECK(sorted(pm.lists[1].items) == sorted(make_items(50000)));
+    CHECK(pm.lists[1].items != make_items(50000));
 }
 
 TEST_MAIN("playlist_logic")

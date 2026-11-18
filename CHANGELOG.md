@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.0.2 — unreleased
+
+Engineering audit fixes. No change to randomness or shuffling.
+
+- Rollback now also runs if an error (exception) occurs after the new playlist
+  was created, so no partially filled playlist is left behind.
+- Rollback only removes a playlist after confirming it is still the one this
+  component created; if another component changed the playlist list meanwhile,
+  nothing is removed and the user is told.
+- New playlists get a unique name: "True Random - Library (2)", "(3)", ...
+  instead of several tabs with an identical name. Existing playlists are never
+  reused or overwritten.
+- Success messages name the playlist created; activation is verified and a
+  failure to activate is reported.
+- The single-track message no longer says "selected" when it comes from the
+  Entire Media Library command.
+- Component compiled at warning level 4 with warnings as errors.
+- CI: version consistency check (version.h, CHANGELOG, release tag);
+  foobar2000 installer used by the integration test is hash-pinned; the
+  real-CPU chi-square diagnostic no longer fails by chance (~1e-4 → ~1e-13).
+
 ## 1.0.1 — 2026-11-17
 
 - Clearer message when *Selected Tracks* is used on a single track: it now

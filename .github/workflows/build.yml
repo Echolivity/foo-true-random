@@ -21,6 +21,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Version consistency (version.h vs CHANGELOG)
+        run: bash scripts/check-version.sh
       - name: Release build + tests
         run: |
           g++ --version | head -1
@@ -110,6 +112,11 @@ jobs:
         with:
           name: foo-true-random
           path: artifact
+      - name: Release tag must match version.h and CHANGELOG
+        run: |
+          tag="${{ inputs.release_tag }}"
+          if [ -z "$tag" ]; then tag="${GITHUB_REF_NAME}"; fi
+          bash scripts/check-version.sh "$tag"
       - name: Create release with the verified package
         env:
           GH_TOKEN: ${{ github.token }}
