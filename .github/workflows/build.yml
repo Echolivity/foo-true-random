@@ -131,4 +131,7 @@ jobs:
           tag="${{ inputs.release_tag }}"
           if [ -z "$tag" ]; then tag="${GITHUB_REF_NAME}"; fi
           # --target creates the tag at the exact commit that was just built and tested.
-          gh release create "$tag" "$pkg" --target "${GITHUB_SHA}" --title "foo-true-random $tag" --notes-file notes.md
+          # Tags with a suffix (e.g. v1.0.2-rc1) are published as pre-releases, so the
+          # "latest release" link and badge keep pointing at the last stable version.
+          pre=""; case "$tag" in *-*) pre="--prerelease";; esac
+          gh release create "$tag" "$pkg" $pre --target "${GITHUB_SHA}" --title "foo-true-random $tag" --notes-file notes.md

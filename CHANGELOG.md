@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.2 — unreleased
+## 1.0.2-rc1 — 2026-11-18 (release candidate)
 
 Engineering audit fixes. No change to randomness or shuffling.
 

@@ -6,7 +6,8 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 src=$(sed -n 's/^#define FTR_VERSION_STRING "\(.*\)"$/\1/p' "$root/foobar2000/foo_true_random/version.h")
-log=$(sed -n 's/^## \([0-9][0-9.]*\).*/\1/p' "$root/CHANGELOG.md" | head -n1)
+# Accepts pre-release suffixes, e.g. 1.0.2-rc1.
+log=$(sed -n 's/^## \([0-9][0-9A-Za-z.+-]*\).*/\1/p' "$root/CHANGELOG.md" | head -n1)
 echo "version.h: ${src:-<missing>}   CHANGELOG top entry: ${log:-<missing>}"
 [ -n "$src" ] && [ "$src" = "$log" ] || { echo "ERROR: version.h and CHANGELOG.md disagree"; exit 1; }
 if [ $# -ge 1 ] && [ -n "$1" ]; then
