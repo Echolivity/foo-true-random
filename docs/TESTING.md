@@ -51,7 +51,10 @@ injection (create fails, insert fails, partial insert reported as success,
 remove fails, reorder refused, locked playlist).
 
 Checked: counts, identities, duplicates, source playlists untouched, new
-playlist activated on success, **no playlist created when the RNG is
+playlist activated on success (and activation failure reported), unique
+names on collision, exceptions after creation (rollback still happens and the
+error propagates), **another component changing the playlist list
+mid-operation (nothing is removed blindly)**, 50,000-entry inputs, **no playlist created when the RNG is
 unavailable or fails mid-way**, rollback removes the incomplete playlist and
 restores the active playlist, in-place shuffle leaves the playlist untouched
 (and creates no undo point) on RNG failure, undo restores the exact previous
@@ -61,8 +64,10 @@ order.
 
 Executes CPUID and — only if reported — RDSEED/RDRAND on the machine running
 the test. Prints CPU brand, raw CPUID bits, the source actually used, sample
-words; builds a 200,000-element permutation; and runs a chi-square **sanity**
-check over 120,000 three-element shuffles. On a CPU without either
+words; builds a 200,000-element permutation; and runs a chi-square
+**diagnostic** over 120,000 three-element shuffles. It fails only above 70
+(p ≈ 1e-13 for a working generator), so it catches grossly broken plumbing
+without failing by chance. On a CPU without either
 instruction it verifies the fail-closed path instead.
 
 ## 5. Integration test inside real foobar2000
@@ -88,8 +93,10 @@ instruction it verifies the fail-closed path instead.
      Library is not configured, so this verifies the "not configured → nothing
      created" path; with a configured library it verifies every library track
      appears exactly once;
+   - running Selected Tracks again creates "True Random - Selection (2)";
    - rollback against the real `playlist_manager` (insert refused; partial
-     insert) leaves no playlist behind and restores the active playlist;
+     insert; exception after a partial insert) leaves no playlist behind and
+     restores the active playlist;
    - a no-hardware CPU model refuses without creating anything.
 4. Writes a report and exits foobar2000; the script fails unless it ends with
    `RESULT: PASS`.

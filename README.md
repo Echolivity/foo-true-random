@@ -29,10 +29,12 @@
 
 | | Command | Where | Result |
 |---|---|---|---|
-| 📚 | **True Random: Entire Media Library** | Edit menu | New playlist with every library track in hardware-random order |
-| 🔀 | **True Random: Current Playlist** | Edit menu | Reorders the active playlist in place. **Ctrl+Z undoes it** |
-| 🎯 | **True Random: Selected Tracks** | Right-click menu | New playlist with just your selection, shuffled. Source playlist untouched |
+| 📚 | **True Random: Entire Media Library** | Edit menu | New playlist *True Random - Library* with every library track in hardware-random order |
+| 🔀 | **True Random: Current Playlist** | Edit menu | Reorders the active playlist **in place** (no new playlist). **Ctrl+Z undoes it** |
+| 🎯 | **True Random: Selected Tracks** | Right-click menu | New playlist *True Random - Selection* with just your selection, shuffled. Source playlist untouched |
 | 🩺 | **True Random: Hardware RNG Status** | Edit menu | Shows what your CPU supports and which source is actually in use |
+
+New playlists are activated after creation. Running a command again creates *True Random - Library (2)*, *(3)* and so on. Existing playlists are never reused or overwritten. Duplicate entries in a selection or playlist are kept, so a track that appears twice still appears twice.
 
 Every action is logged to **View → Console**:
 
@@ -80,7 +82,7 @@ flowchart LR
 1. **Hardware only.** Random bits come from the CPU's `RDSEED` instruction, or `RDRAND` if RDSEED isn't available. There is no OS RNG, no `std::random_device` and no foobar2000 shuffle, not even as a hidden fallback.
 2. **No modulo bias.** Each pick in `[0, n)` discards raw values below `2³² mod n` before reducing, so every outcome is exactly equally likely.
 3. **Unbiased shuffle.** Fisher–Yates: `for i = n-1 … 1: swap(a[i], a[random(0..i)])`. Every order of your playlist is equally likely.
-4. **All-or-nothing.** The whole new order is computed *before* foobar2000 is touched. If anything fails, you get a clear message and your playlists are exactly as they were.
+4. **Fail safe.** The whole new order is computed *before* foobar2000 is touched, so a hardware RNG failure changes nothing. If adding tracks to a new playlist fails, or an error occurs part-way, the incomplete playlist is removed and your previous active playlist is restored. This is a clean-up after failure, not an atomic transaction: other components may briefly see the new playlist. If the playlist list was changed by something else meanwhile, nothing is removed blindly; you're told to delete the leftover playlist yourself.
 
 ## 🛡 Guarantees, and how they're checked
 
@@ -90,10 +92,11 @@ flowchart LR
 | Each track appears exactly once; duplicates are kept | Unit tests plus checks inside a real foobar2000 |
 | Unsupported instructions are never executed | Mock CPU tests that fail if an unavailable instruction is ever called |
 | Hardware failure never falls back to software | Tests for RDSEED exhaustion → RDRAND → refusal, and for "stuck" output |
-| Failed operations leave no partial playlists | Failure-injection tests, including against foobar2000's real playlist manager |
+| Failed operations leave no partial playlists | Failure-injection tests (refused, partial, and exception mid-insert), including against foobar2000's real playlist manager |
+| Clean-up never deletes one of your playlists | Tests where another component changes the playlist list mid-operation: nothing is removed |
 | Undo restores the exact previous order | Verified through foobar2000's own undo in CI |
 
-Every push runs the whole suite in GitHub Actions: Linux with memory/UB sanitizers, Windows MSVC Debug and Release, and an **automated test inside foobar2000 v2.26.3** that installs the packaged component and runs all four commands. Details are in [docs/TESTING.md](docs/TESTING.md).
+Every push runs the whole suite in GitHub Actions: Linux with memory/UB sanitizers, Windows MSVC Debug and Release, and an **automated test inside foobar2000 v2.26.3** that installs the packaged component, checks all four commands are registered, and runs the three playlist commands (Status shows a popup and is checked manually). Details are in [docs/TESTING.md](docs/TESTING.md).
 
 ### Verified on
 

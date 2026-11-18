@@ -59,14 +59,26 @@ The complete permutation is computed **before** any playlist is touched.
 **New playlist (Entire Media Library, Selected Tracks)**
 
 1. Shuffle in memory. On RNG failure: report, create nothing.
-2. Remember the active playlist; `create_playlist(name, SIZE_MAX, SIZE_MAX)`
-   (append at end).
-3. `playlist_insert_items(...)`, then read the playlist back and compare it
+2. Pick a unique name: `True Random - Library`, or `… (2)`, `… (3)` if taken
+   (ASCII case-insensitive comparison). Existing playlists are never reused.
+3. Remember the active playlist; `create_playlist(name, SIZE_MAX, SIZE_MAX)`
+   (append at end). A `created_playlist_guard` now owns the new playlist.
+4. `playlist_insert_items(...)`, then read the playlist back and compare it
    element-by-element with the shuffled sequence.
-4. On any failure: `remove_playlists(mask)` with a `pfc::bit_array_bittable`
-   sized to the current playlist count and exactly the new playlist's bit set;
-   restore the previously active playlist; report.
-5. On success: activate the new playlist; report track count and source.
+5. On failure, **or if an exception escapes** (the guard's destructor), roll
+   back: `remove_playlists(mask)` with a `pfc::bit_array_bittable` sized to the
+   current count and only the new playlist's bit set, then restore the
+   previously active playlist. Before removing, the guard confirms that the
+   playlist count, the index and the stored name are unchanged since creation;
+   otherwise it removes nothing and the user is asked to delete the leftover
+   playlist manually. Deleting the wrong playlist is worse than leaving one.
+6. On success: commit, activate the new playlist, verify it became active
+   (reported if not), report track count, playlist name and RNG source.
+
+**Not atomic.** foobar2000 has no playlist transaction API, so this is
+compensating rollback. Other components receive callbacks for the creation
+and the removal. The guarantee is that no partial playlist *remains* and no
+existing playlist is touched.
 
 **Current playlist (in place)**
 
@@ -79,11 +91,20 @@ The complete permutation is computed **before** any playlist is touched.
    selection/handles are preserved and Edit → Undo restores the previous order.
 4. Read the playlist back and compare with the expected order.
 
-A uniformly random permutation's inverse is also uniformly random, so the
-distribution does not depend on whether foobar2000 interprets `order` as
-"new position k takes old item order[k]" or its inverse; the read-back check
-does depend on it, and is written for the former interpretation, which is the
-one `pfc` uses for reorder permutations.
+`playlist_reorder_items` places old item `order[k]` at new position `k`. This
+is verified inside real foobar2000 by the integration test. (A uniformly random
+permutation's inverse is also uniformly random, so the distribution would not
+depend on it anyway; the read-back check does.)
+
+If foobar2000 refuses the reorder after the undo point was created, the undo
+stack holds a restore point identical to the current order. Undoing it is
+harmless.
+
+**Why Current Playlist reorders in place.** The other two commands create a
+new playlist. Current Playlist deliberately reorders the playlist you are
+looking at, so playlist-specific settings and its tab stay put, and Edit → Undo
+restores it exactly. Making a shuffled copy of a playlist is already covered:
+select all (Ctrl+A), then use *Selected Tracks*.
 
 ## Threading
 
@@ -96,4 +117,6 @@ is immutable after thread-safe initialization.
 ## Deliberate non-features
 
 No settings, no preferences page, no software fallback, no weighting, history,
-recommendation or "smart" shuffle.
+recommendation or "smart" shuffle. Playback is never started or changed by the
+component: after a shuffle, playback order is whatever foobar2000's
+*Playback → Order* says (use *Default* to hear the shuffled order as is).
