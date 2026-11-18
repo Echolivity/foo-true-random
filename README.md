@@ -1,105 +1,172 @@
-# foo-true-random
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="foo-true-random — hardware-random playlists for foobar2000 v2" width="100%">
+</p>
 
-A foobar2000 v2 (Windows x64) component that shuffles playlists using **only**
-the CPU's hardware random-number instructions — `RDSEED`, falling back to
-`RDRAND` — with a provably unbiased Fisher–Yates shuffle.
+<p align="center">
+  <a href="https://github.com/Echolivity/foo-true-random/actions/workflows/build.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/Echolivity/foo-true-random/build.yml?branch=main&label=build%20%26%20tests&style=flat-square"></a>
+  <a href="https://github.com/Echolivity/foo-true-random/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Echolivity/foo-true-random?style=flat-square&color=F5B841"></a>
+  <img alt="foobar2000 v2 x64" src="https://img.shields.io/badge/foobar2000-v2%20x64-4FD1C5?style=flat-square">
+  <img alt="C++20" src="https://img.shields.io/badge/C%2B%2B-20-9F7AEA?style=flat-square">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-63B3ED?style=flat-square"></a>
+</p>
 
-If the CPU has neither instruction, or both fail, the component **refuses** and
-changes nothing. There is no software PRNG, no Windows crypto API, no
-`std::random_device`, and no use of foobar2000's built-in shuffle — not even
-as a hidden fallback.
+<p align="center">
+  <b>Shuffle your music with randomness straight from your CPU's hardware RNG,<br>
+  using a mathematically unbiased algorithm. No software PRNG, no fallback.</b>
+</p>
 
-It is a random playlist generator. Nothing more: no recommendations, history,
-weighting or "smart" ordering.
+<p align="center">
+  <a href="https://github.com/Echolivity/foo-true-random/releases/latest/download/foo-true-random.fb2k-component"><b>⬇ Download the latest .fb2k-component</b></a>
+  &nbsp;·&nbsp; <a href="#-install">Install</a>
+  &nbsp;·&nbsp; <a href="#-how-it-works">How it works</a>
+  &nbsp;·&nbsp; <a href="#-faq">FAQ</a>
+  &nbsp;·&nbsp; <a href="docs/DESIGN.md">Design docs</a>
+</p>
 
-## Commands
+---
 
-| Where | Command | What it does |
+## ✨ What it does
+
+| | Command | Where | Result |
+|---|---|---|---|
+| 📚 | **True Random: Entire Media Library** | Edit menu | New playlist with every library track in hardware-random order |
+| 🔀 | **True Random: Current Playlist** | Edit menu | Reorders the active playlist in place. **Ctrl+Z undoes it** |
+| 🎯 | **True Random: Selected Tracks** | Right-click menu | New playlist with just your selection, shuffled. Source playlist untouched |
+| 🩺 | **True Random: Hardware RNG Status** | Edit menu | Shows what your CPU supports and which source is actually in use |
+
+Every action is logged to **View → Console**:
+
+```text
+foo_true_random: Current Playlist: Randomized 23 tracks in the current playlist using RDSEED (11 x 64-bit values).
+```
+
+> [!NOTE]
+> It's a random playlist generator, nothing more. There are no recommendations, play-history weighting, "smart" ordering or settings.
+
+## 🚀 Install
+
+1. Download **[foo-true-random.fb2k-component](https://github.com/Echolivity/foo-true-random/releases/latest/download/foo-true-random.fb2k-component)**.
+2. In foobar2000 go to **File → Preferences → Components → Install…**, pick the file, then click **Apply** and let foobar2000 restart.
+   Double-clicking the file also works.
+3. Check it works with **Edit → True Random: Hardware RNG Status**.
+
+**Requirements:** foobar2000 **v2.x 64-bit** on Windows, and a CPU with `RDSEED` or `RDRAND`.
+
+| CPU | RDSEED | RDRAND | Works? |
+|---|:---:|:---:|---|
+| Intel 5th gen (Broadwell) and newer | ✅ | ✅ | ✅ uses **RDSEED** |
+| Intel 3rd–4th gen (Ivy Bridge, Haswell) | — | ✅ | ✅ uses **RDRAND** |
+| Intel 2nd gen (Sandy Bridge) and older | — | — | ❌ refuses safely by design |
+| AMD Ryzen (all generations) | ✅ | ✅ | ✅ uses **RDSEED** |
+
+The component always checks the actual CPU at runtime. The table is a guide, not an assumption.
+
+## 🔬 How it works
+
+```mermaid
+flowchart LR
+    A["🎵 Tracks"] --> B{"CPUID check"}
+    B -- "RDSEED ✓" --> C["RDSEED<br/>(preferred)"]
+    B -- "RDRAND only" --> D["RDRAND<br/>(fallback)"]
+    B -- "neither" --> X["⛔ Refuse<br/>nothing changes"]
+    C -- "retries exhausted" --> D
+    D -- "retries exhausted" --> X
+    C --> E["Rejection sampling<br/>no modulo bias"]
+    D --> E
+    E --> F["Fisher–Yates<br/>full permutation in memory"]
+    F --> G["✅ Apply to playlist<br/>in one step"]
+```
+
+1. **Hardware only.** Random bits come from the CPU's `RDSEED` instruction, or `RDRAND` if RDSEED isn't available. There is no OS RNG, no `std::random_device` and no foobar2000 shuffle, not even as a hidden fallback.
+2. **No modulo bias.** Each pick in `[0, n)` discards raw values below `2³² mod n` before reducing, so every outcome is exactly equally likely.
+3. **Unbiased shuffle.** Fisher–Yates: `for i = n-1 … 1: swap(a[i], a[random(0..i)])`. Every order of your playlist is equally likely.
+4. **All-or-nothing.** The whole new order is computed *before* foobar2000 is touched. If anything fails, you get a clear message and your playlists are exactly as they were.
+
+## 🛡 Guarantees, and how they're checked
+
+| Guarantee | Evidence |
+|---|---|
+| Every possible order is equally likely | Exhaustive proofs in the test suite: every input value, every permutation counted, not sampled |
+| Each track appears exactly once; duplicates are kept | Unit tests plus checks inside a real foobar2000 |
+| Unsupported instructions are never executed | Mock CPU tests that fail if an unavailable instruction is ever called |
+| Hardware failure never falls back to software | Tests for RDSEED exhaustion → RDRAND → refusal, and for "stuck" output |
+| Failed operations leave no partial playlists | Failure-injection tests, including against foobar2000's real playlist manager |
+| Undo restores the exact previous order | Verified through foobar2000's own undo in CI |
+
+Every push runs the whole suite in GitHub Actions: Linux with memory/UB sanitizers, Windows MSVC Debug and Release, and an **automated test inside foobar2000 v2.26.3** that installs the packaged component and runs all four commands. Details are in [docs/TESTING.md](docs/TESTING.md).
+
+### Verified on
+
+| Machine | OS | Result |
 |---|---|---|
-| Edit menu | **True Random: Entire Media Library** | New playlist "True Random - Library" with every Media Library track in hardware-random order |
-| Edit menu | **True Random: Current Playlist** | Reorders the active playlist in place. **Edit → Undo** restores the previous order |
-| Edit menu | **True Random: Hardware RNG Status** | Shows CPUID capabilities and the source actually supplying values |
-| Context menu | **True Random: Selected Tracks** | New playlist "True Random - Selection" with the selected tracks in hardware-random order (source playlist untouched) |
+| Intel Core i7-13620H (user laptop) | Windows 11 25H2 | ✅ RDSEED in use, playlists shuffled |
+| GitHub Actions Intel Xeon runners | Windows Server 2025 | ✅ full automated suite in foobar2000 |
 
-Success is logged to the foobar2000 console (View → Console) with the track
-count and the source that supplied the values, e.g.
-`Randomized 4211 tracks into a new playlist using RDSEED (2105 x 64-bit values).`
-Failures show a popup and are also logged.
+## ❓ FAQ
 
-## Requirements
+<details>
+<summary><b>The same song played twice before others played at all. Is the shuffle broken?</b></summary>
 
-- foobar2000 v2.x, **64-bit**.
-- A CPU with `RDSEED` or `RDRAND` (Intel Ivy Bridge or newer; AMD Zen or newer).
-  On older CPUs such as **Intel Sandy Bridge** every command reports
-  "hardware RNG unavailable" and does nothing — by design.
+Most likely foobar2000's own **Playback → Order** is set to *Random* or *Shuffle*. That mode picks tracks with foobar2000's built-in shuffle and ignores the playlist order.
+Set **Playback → Order → Default**, run *True Random: Current Playlist*, then start from the **first** track. Each track plays exactly once, in hardware-random order.
+</details>
 
-## Install
+<details>
+<summary><b>My PC says "hardware RNG unavailable". Can I enable a software fallback?</b></summary>
 
-1. Download `foo-true-random.fb2k-component` from the
-   [Releases](https://github.com/Echolivity/foo-true-random/releases) page.
-2. foobar2000 → File → Preferences → Components → **Install…**, pick the file,
-   click **Apply**, let foobar2000 restart.
-   (Or double-click the file / drag it onto the Components page.)
-3. Run **Edit → True Random: Hardware RNG Status** to confirm which instruction
-   your CPU provides.
+No, on purpose. Without RDSEED/RDRAND the component refuses rather than quietly using something else. This affects only quite old CPUs, such as Intel Sandy Bridge (2nd gen Core, 2011).
+</details>
 
-## How the randomness works (short version)
+<details>
+<summary><b>Is this "true" randomness?</b></summary>
 
-- `j = uniform_below(i + 1)` by rejection sampling on 32-bit hardware words:
-  values below `threshold = 2^32 mod n` are discarded, the rest are reduced
-  with `x mod n`. No modulo bias.
-- Fisher–Yates: `for i = n-1 … 1: swap(a[i], a[uniform_below(i+1)])`.
-- The complete permutation is computed **before** any playlist is touched. A
-  failed operation leaves no partial playlist and no changed playlist.
+RDSEED and RDRAND are CPU interfaces to an on-chip hardware random number generator. This project doesn't access raw physical noise and can't certify the quality of the CPU's entropy source; no software can. What it *does* guarantee, with proof, is that the hardware's random values are turned into playlist orders without any bias. More in [docs/HARDWARE_RNG.md](docs/HARDWARE_RNG.md).
+</details>
 
-Details: [docs/DESIGN.md](docs/DESIGN.md), [docs/HARDWARE_RNG.md](docs/HARDWARE_RNG.md),
-[docs/TESTING.md](docs/TESTING.md).
+<details>
+<summary><b>Why does selecting one track say "no random values were needed"?</b></summary>
 
-**Honesty note.** RDSEED/RDRAND are CPU-provided interfaces to an on-chip
-random number generator. This project does not access raw physical noise and
-does not certify the quality of the CPU's entropy source. What it guarantees,
-by exhaustive proof in its tests, is that uniformly distributed hardware words
-are turned into uniformly distributed playlist orders.
+A single track has only one possible order. Select two or more tracks to shuffle.
+</details>
 
-## Building from source
+<details>
+<summary><b>Entire Media Library says the library isn't configured.</b></summary>
 
-Prerequisites: Visual Studio 2022 (or newer) with the *Desktop development
-with C++* workload (v143 toolset), CMake ≥ 3.20, 7-Zip or Windows `tar`.
+Add your music folders under **File → Preferences → Media Library**, wait for scanning to finish, then try again.
+</details>
 
-From a **Developer PowerShell for VS 2022**:
+## 🛠 Building from source
+
+You need Visual Studio 2022+ (Desktop C++, v143), CMake ≥ 3.20, and 7-Zip or Windows `tar`. In a **Developer PowerShell for VS**:
 
 ```powershell
 git clone https://github.com/Echolivity/foo-true-random
 cd foo-true-random
-./scripts/fetch-sdk.ps1      # official foobar2000 SDK 2026-10-01, SHA-256 pinned
-./scripts/build.ps1          # Debug|x64 + Release|x64, then packages
-# -> dist\foo-true-random.fb2k-component
+./scripts/fetch-sdk.ps1   # official foobar2000 SDK 2026-10-01, SHA-256 verified
+./scripts/build.ps1       # Debug + Release x64 → dist\foo-true-random.fb2k-component
 ```
 
-Portable tests (any OS with a C++20 compiler; on x86-64 the real-hardware test
-also executes RDSEED/RDRAND if CPUID reports them):
+Run the tests (any OS with a C++20 compiler):
 
 ```sh
 cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release
 cmake --build build-tests
-ctest --test-dir build-tests --output-on-failure -V
+ctest --test-dir build-tests --output-on-failure
 ```
 
-The same steps run in GitHub Actions on every push
-([.github/workflows/build.yml](.github/workflows/build.yml)).
-
-## Repository layout
+<details>
+<summary><b>Repository layout</b></summary>
 
 ```
-include/ftr/        portable core: random_core.h, hardware_rng.h, playlist_logic.h
-src/                hardware_rng.cpp (selection/retry logic), hardware_rng_x86.cpp (CPUID/RDSEED/RDRAND)
-tests/              unit, exhaustive, mock-hardware, fake-playlist and real-hardware tests
-foobar2000/foo_true_random/   component sources + foo_true_random.vcxproj
-scripts/            fetch-sdk.ps1, build.ps1, package.ps1
-docs/               DESIGN.md, HARDWARE_RNG.md, TESTING.md
+include/ftr/                 portable core (no SDK): random_core.h · hardware_rng.h · playlist_logic.h
+src/                         RNG source selection + the only code that runs CPUID / RDSEED / RDRAND
+tests/                       exhaustive, mock-hardware, fake-playlist and real-CPU tests
+foobar2000/foo_true_random/  the component itself + MSBuild project
+scripts/                     fetch-sdk · build · package · integration-test
+docs/                        DESIGN · HARDWARE_RNG · TESTING
 ```
+</details>
 
-## License
+## 📄 License
 
-MIT — see [LICENSE](LICENSE). The foobar2000 SDK is downloaded at build time
-and is not redistributed in this repository.
+[MIT](LICENSE) © 2026 Echolivity. The foobar2000 SDK is downloaded at build time and not redistributed. foobar2000 is a product of its respective author; this is an independent third-party component.
