@@ -1,8 +1,15 @@
 # Changelog
 
-## 1.0.2-rc1 — 2026-11-18 (release candidate)
+## 1.0.2 — 2026-11-18
 
 Engineering audit fixes. No change to randomness or shuffling.
+Identical code to release candidate 1.0.2-rc1 apart from the version label.
+
+Manually verified on 1.0.2-rc1 (Intel Core i7-13620H, Windows 11 25H2,
+foobar2000 2.26.3 x64): install; Entire Media Library with an empty library
+(refused, nothing changed) and with a real 23-track library (23 tracks,
+RDSEED); Current Playlist followed by Ctrl+Z (exact restore); Selected Tracks
+twice ("True Random - Selection" and "(2)").
 
 - Rollback now also runs if an error (exception) occurs after the new playlist
   was created, so no partially filled playlist is left behind.

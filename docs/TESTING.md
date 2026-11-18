@@ -119,5 +119,18 @@ ctest --test-dir build-tests -C Release -V      # includes test_hardware_real on
   CPUID-decode tests (exact Sandy Bridge register model) and the no-hardware
   paths, but has not been executed on that physical machine.
 - Entire Media Library with a populated library inside foobar2000 (CI profile
-  has no library folders configured).
+  has no library folders configured). Covered manually, see below.
 - Interactive UI checks (menu placement, popup appearance) are not automated.
+
+## Manual verification on a user machine
+
+Intel Core i7-13620H, Windows 11 25H2 (build 26200), foobar2000 2.26.3 x64,
+component 1.0.2-rc1 (identical code to 1.0.2), 2026-11-18:
+
+| Check | Result |
+|---|---|
+| Hardware RNG Status | RDSEED and RDRAND supported; active source RDSEED |
+| Entire Media Library, library folder with no music | "The Media Library is empty. Nothing was changed." No playlist created |
+| Entire Media Library, 23-track library | `Randomized 23 tracks into new playlist "True Random - Library" using RDSEED (11 x 64-bit values).` |
+| Current Playlist, then Ctrl+Z | Order changed; Ctrl+Z restored the exact previous order |
+| Selected Tracks, twice | "True Random - Selection" and "True Random - Selection (2)" created |

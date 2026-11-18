@@ -102,7 +102,7 @@ Every push runs the whole suite in GitHub Actions: Linux with memory/UB sanitize
 
 | Machine | OS | Result |
 |---|---|---|
-| Intel Core i7-13620H (user laptop) | Windows 11 25H2 | ✅ RDSEED in use, playlists shuffled |
+| Intel Core i7-13620H (user laptop) | Windows 11 25H2 | ✅ RDSEED in use; all three commands, Ctrl+Z undo, empty and real library ([details](docs/TESTING.md#manual-verification-on-a-user-machine)) |
 | GitHub Actions Intel Xeon runners | Windows Server 2025 | ✅ full automated suite in foobar2000 |
 
 ## ❓ FAQ
