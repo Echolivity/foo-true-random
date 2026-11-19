@@ -114,10 +114,10 @@ ctest --test-dir build-tests -C Release -V      # includes test_hardware_real on
 
 ## What is not covered automatically
 
-- Runs on the specific Ryzen 9 7950X3D and the Sandy Bridge machine: CI uses
-  GitHub's Azure-hosted CPUs. The Sandy Bridge behaviour is covered by the
-  CPUID-decode tests (exact Sandy Bridge register model) and the no-hardware
-  paths, but has not been executed on that physical machine.
+- The Sandy Bridge machine: CI uses GitHub's Azure-hosted CPUs. The Sandy
+  Bridge behaviour is covered by the CPUID-decode tests (exact Sandy Bridge
+  register model) and the no-hardware paths, but has not been executed on that
+  physical machine. (The Ryzen 9 7950X3D has been checked manually, below.)
 - Entire Media Library with a populated library inside foobar2000 (CI profile
   has no library folders configured). Covered manually, see below.
 - Interactive UI checks (menu placement, popup appearance) are not automated.
@@ -134,3 +134,13 @@ component 1.0.2-rc1 (identical code to 1.0.2), 2026-11-18:
 | Entire Media Library, 23-track library | `Randomized 23 tracks into new playlist "True Random - Library" using RDSEED (11 x 64-bit values).` |
 | Current Playlist, then Ctrl+Z | Order changed; Ctrl+Z restored the exact previous order |
 | Selected Tracks, twice | "True Random - Selection" and "True Random - Selection (2)" created |
+
+AMD Ryzen 9 7950X3D (Zen 4), foobar2000 v2 x64, component 1.0.2, 2026-11-19 —
+first run on an AMD CPU:
+
+| Check | Result |
+|---|---|
+| Hardware RNG Status | `RDSEED: supported, RDRAND: supported`; `CPUID max leaf 0x10, leaf1.ECX bit30=1, leaf7.EBX bit18=1`; `Active RNG source: RDSEED (verified by drawing a value now)` |
+
+The Status command executes RDSEED and checks its success flag, so this
+confirms RDSEED delivers values on this CPU, not only that CPUID advertises it.
