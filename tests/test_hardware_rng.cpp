@@ -312,4 +312,118 @@ TEST(shuffle_through_hardware_rng_with_mock) {
     CHECK_EQ(m.illegal_rdseed + m.illegal_rdrand, std::uint64_t(0));
 }
 
+// ------------------------------------------- OS generator on CPUs without either instruction
+
+TEST(no_instructions_without_fallback_still_refuses) {
+    mock_provider m;  // Sandy Bridge model: neither instruction
+    hardware_rng rng(m);
+    std::uint64_t w = 0;
+    CHECK(rng.state() == rng_state::no_hardware);
+    CHECK(!rng.next_u64(w));
+    CHECK(!rng.using_system_rng());
+    CHECK_EQ(m.illegal_rdseed + m.illegal_rdrand, std::uint64_t(0));
+}
+
+TEST(no_instructions_uses_system_rng) {
+    mock_provider m;  // Sandy Bridge model
+    mock_system_rng os;
+    hardware_rng rng(m, {}, &os);
+    CHECK(rng.usable());
+    CHECK(rng.using_system_rng());
+    CHECK(rng.current_source() == rng_source::system);
+    std::vector<std::size_t> order;
+    CHECK(make_permutation<std::uint32_t>(rng, 500, order) == core_status::ok);
+    CHECK(is_permutation_of_iota(order));
+    CHECK(rng.last_source() == rng_source::system);
+    CHECK(rng.words_from_system() > 0);
+    CHECK_EQ(rng.words_from_rdseed() + rng.words_from_rdrand(), std::uint64_t(0));
+    CHECK_EQ(m.rdseed_calls + m.rdrand_calls, std::uint64_t(0));     // no instruction executed
+    CHECK_EQ(m.illegal_rdseed + m.illegal_rdrand, std::uint64_t(0));
+    const std::string usage = rng.usage_summary();
+    CHECK(usage.find("neither RDSEED nor RDRAND") != std::string::npos);
+}
+
+TEST(system_rng_never_used_when_cpu_has_rdseed_or_rdrand) {
+    for (const cpu_features f : {cpu_features{true, true}, cpu_features{true, false}, cpu_features{false, true}}) {
+        mock_provider m;
+        m.feats = f;
+        m.rdseed = always_ok(31);
+        m.rdrand = always_ok(32);
+        mock_system_rng os;
+        hardware_rng rng(m, {}, &os);
+        std::vector<std::size_t> order;
+        CHECK(make_permutation<std::uint32_t>(rng, 200, order) == core_status::ok);
+        CHECK(!rng.using_system_rng());
+        CHECK_EQ(os.calls, std::uint64_t(0));
+    }
+}
+
+TEST(hardware_failure_is_not_replaced_by_system_rng) {
+    // A capable CPU whose hardware fails must refuse, exactly as before.
+    mock_provider m;
+    m.feats = {true, true};
+    m.rdseed = always_fail();
+    m.rdrand = always_fail();
+    mock_system_rng os;
+    hardware_rng rng(m, {}, &os);
+    std::uint64_t w = 0;
+    CHECK(rng.state() == rng_state::sources_exhausted);
+    CHECK(!rng.next_u64(w));
+    CHECK_EQ(os.calls, std::uint64_t(0));
+    CHECK(rng.failure_reason().find("only used on CPUs without RDSEED and RDRAND") != std::string::npos);
+
+    mock_provider m2;  // stuck hardware after use: abort, still no fallback
+    m2.feats = {true, false};
+    m2.rdseed = [](std::uint64_t i, std::uint64_t& out) {
+        out = i < 12 ? distinct_value(i, 7) : 0x1234ull;
+        return true;
+    };
+    mock_system_rng os2;
+    hardware_rng rng2(m2, {}, &os2);
+    while (rng2.next_u64(w)) {}
+    CHECK(rng2.state() == rng_state::stuck_output);
+    CHECK_EQ(os2.calls, std::uint64_t(0));
+}
+
+TEST(failing_system_rng_fails_closed) {
+    mock_provider m;
+    mock_system_rng os;
+    os.fn = always_fail();
+    hardware_rng rng(m, {}, &os);
+    std::uint64_t w = 0;
+    CHECK(rng.state() == rng_state::sources_exhausted);
+    CHECK(!rng.next_u64(w));
+    CHECK(rng.failure_reason().find("operating-system random number generator failed") != std::string::npos);
+
+    mock_system_rng later;   // works for the self-test and a few values, then fails
+    later.fn = ok_then_fail(11, 5);
+    hardware_rng rng2(m, {}, &later);
+    CHECK(rng2.usable());
+    int got = 0;
+    while (rng2.next_u64(w)) ++got;
+    CHECK_EQ(got, 3);
+    CHECK(rng2.state() == rng_state::sources_exhausted);
+    CHECK(!rng2.next_u64(w));
+}
+
+TEST(stuck_system_rng_is_rejected) {
+    mock_provider m;
+    mock_system_rng os;
+    os.fn = stuck(42);
+    hardware_rng rng(m, {}, &os);   // caught by the self-test before any value is used
+    CHECK(!rng.usable());
+    mock_system_rng later;
+    later.fn = [](std::uint64_t i, std::uint64_t& out) {
+        out = i < 10 ? distinct_value(i, 3) : 77ull;
+        return true;
+    };
+    hardware_rng rng2(m, {}, &later);   // self-test uses calls 0..7
+    std::uint64_t w = 0;
+    CHECK(rng2.next_u64(w));       // call 8
+    CHECK(rng2.next_u64(w));       // call 9
+    CHECK(rng2.next_u64(w));       // call 10: first 77
+    CHECK(!rng2.next_u64(w));      // call 11: second 77, rejected
+    CHECK(rng2.state() == rng_state::stuck_output);
+}
+
 TEST_MAIN("hardware_rng")

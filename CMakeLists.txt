@@ -13,7 +13,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(ftr_core STATIC
     src/hardware_rng.cpp
-    src/hardware_rng_x86.cpp)
+    src/hardware_rng_x86.cpp
+    src/system_rng.cpp)
 target_include_directories(ftr_core PUBLIC include)
 
 if(MSVC)

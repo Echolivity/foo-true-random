@@ -131,4 +131,20 @@ TEST(real_sanity_chi_square_n3) {
     CHECK(chi2 < 70.0);
 }
 
+TEST(real_system_rng_and_fallback_rule) {
+    // The real OS generator (BCryptGenRandom on Windows, getrandom on Linux).
+    std::uint64_t a = 0, b = 0;
+    CHECK(os_system_rng_provider().random64(a));
+    CHECK(os_system_rng_provider().random64(b));
+    CHECK(a != b);
+    const cpu_features f = cpu_instruction_provider().features();
+    hardware_rng rng(cpu_instruction_provider(), {}, &os_system_rng_provider());
+    std::vector<std::size_t> order;
+    CHECK(make_permutation<std::uint32_t>(rng, 1000, order) == core_status::ok);
+    CHECK(is_permutation_of_iota(order));
+    // The OS generator is used if and only if this CPU has neither instruction.
+    CHECK(rng.using_system_rng() == (!f.rdseed && !f.rdrand));
+    std::printf("  source with fallback configured: %s\n", rng.usage_summary().c_str());
+}
+
 TEST_MAIN("hardware_real")

@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.1.0 — 2026-11-24
+
+Works on CPUs without a hardware random number generator.
+
+- CPUs with neither RDSEED nor RDRAND (Intel Sandy Bridge, 2nd gen Core, and
+  older) now use the Windows system random number generator
+  (`BCryptGenRandom`) instead of refusing every command. Previously the
+  component could not be used on these CPUs at all.
+- CPUs with RDSEED or RDRAND behave exactly as before: RDSEED, then RDRAND,
+  and a hardware failure is still refused. The Windows generator is never
+  used as a fallback for failing hardware.
+- *Hardware RNG Status*, the console messages and the component description
+  say which source was used.
+- The same health checks apply to the Windows generator (discarded self-test
+  words, rejection of identical consecutive values).
+- Tests: mock tests for every CPU combination, a real `BCryptGenRandom` test,
+  and an integration test inside foobar2000 that shuffles with a no-hardware
+  CPU model and the real Windows generator.
+
 ## 1.0.2 — 2026-11-18
 
 Engineering audit fixes. No change to randomness or shuffling.

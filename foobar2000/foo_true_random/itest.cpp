@@ -160,6 +160,16 @@ void run_tests(reporter& r, const char* media_dir) {
                (ok ? ftr::to_string(rng.last_source()) : rng.failure_reason().c_str()));
         r.check(ok == (feats.rdseed || feats.rdrand), "hardware RNG usable iff CPUID reports RDSEED or RDRAND");
     }
+    {
+        // As the shipped commands construct it: the Windows RNG may be used, but only without RDSEED/RDRAND.
+        ftr::hardware_rng rng(ftr::cpu_instruction_provider(), {}, &ftr::os_system_rng_provider());
+        std::uint64_t w = 0;
+        const bool ok = rng.usable() && rng.next_u64(w);
+        r.info("RNG source as used by the commands: " + std::string(ok ? ftr::to_string(rng.last_source()) : "none"));
+        r.check(ok, "commands' RNG is usable in the foobar2000 process");
+        r.check(rng.using_system_rng() == (!feats.rdseed && !feats.rdrand),
+                "Windows system RNG used if and only if the CPU has neither RDSEED nor RDRAND");
+    }
 
     // ---- registration
     r.check(mainmenu_command_name(guid_cmd_library) == "True Random: Entire Media Library",
@@ -320,6 +330,25 @@ void run_tests(reporter& r, const char* media_dir) {
         r.check(!res.ok && pm->get_playlist_count() == count_before && nh.executed == 0,
                 "No-hardware CPU model: refused, nothing created, no instruction executed");
         r.info("No-hardware message: " + res.message);
+    }
+
+    // ---- the same CPU model with the Windows system RNG, as the shipped commands run it
+    {
+        const std::size_t count_before = pm->get_playlist_count();
+        no_hardware_provider nh;
+        ftr::hardware_rng rng(nh, {}, &ftr::os_system_rng_provider());
+        playlist_manager_backend b;
+        const auto res = ftr::create_shuffled_playlist(b, rng, tracks, "itest no hardware windows rng");
+        const bool created = res.ok && pm->get_playlist_count() == count_before + 1;
+        r.check(created && res.source == ftr::rng_source::system && nh.executed == 0,
+                "No-hardware CPU model + Windows RNG: playlist created, source is the Windows RNG, no instruction executed");
+        r.check(created && same_multiset(items_of(res.playlist_index), tracks),
+                "No-hardware CPU model + Windows RNG: every track exactly once");
+        r.info("No-hardware + Windows RNG message: " + res.message);
+        if (created) {
+            pfc::bit_array_one m(res.playlist_index);
+            pm->remove_playlists(m);
+        }
     }
 }
 
