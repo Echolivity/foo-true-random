@@ -1,8 +1,11 @@
-// foo-true-random — hardware random-number abstraction (RDSEED / RDRAND only).
+// foo-true-random — random-number source abstraction.
 //
-// There is deliberately NO software, operating-system, or std::random_device
-// fallback anywhere in this project. If neither instruction can deliver
-// values, every call fails and the caller must abort.
+// Values come from the CPU's RDSEED, then RDRAND. Only on a CPU that supports
+// NEITHER instruction (e.g. Intel Sandy Bridge and older) may an operating-system
+// generator be used instead (on Windows: BCryptGenRandom), and only if the caller
+// passes one in. A CPU that has RDSEED/RDRAND never falls back: if its hardware
+// fails, every call fails and the caller must abort. There is no software PRNG
+// and no std::random_device anywhere in this project.
 //
 // SPDX-License-Identifier: MIT
 #pragma once
@@ -12,7 +15,7 @@
 
 namespace ftr {
 
-enum class rng_source { none, rdseed, rdrand };
+enum class rng_source { none, rdseed, rdrand, system };
 const char* to_string(rng_source s) noexcept;
 
 struct cpu_features {
@@ -63,6 +66,19 @@ instruction_provider& cpu_instruction_provider() noexcept;
 // Raw CPUID values of the running CPU (all zero on non-x86-64 builds).
 cpuid_snapshot read_cpuid_snapshot() noexcept;
 
+// The operating system's cryptographic random number generator. Used ONLY on
+// CPUs that report neither RDSEED nor RDRAND (see hardware_rng).
+class system_rng_provider {
+public:
+    virtual ~system_rng_provider() = default;
+    // One request for 64 random bits. Returns false on failure; never retries.
+    virtual bool random64(std::uint64_t& out) noexcept = 0;
+};
+
+// The real OS generator: BCryptGenRandom on Windows (getrandom on Linux, used by
+// the portable test suite). Stateless and safe to use from any thread.
+system_rng_provider& os_system_rng_provider() noexcept;
+
 struct rng_policy {
     // RDSEED may legitimately fail when its entropy buffer is drained; retry
     // with PAUSE in between. After this many consecutive failures the source
@@ -79,13 +95,16 @@ struct rng_policy {
 
 enum class rng_state {
     ready,              // at least one source is usable
-    no_hardware,        // CPUID reports neither RDSEED nor RDRAND
+    no_hardware,        // CPUID reports neither RDSEED nor RDRAND, and no system fallback was given
     sources_exhausted,  // every supported source failed (retry limit or self-test)
     stuck_output,       // a source returned identical consecutive words; operation aborted
 };
 const char* to_string(rng_state s) noexcept;
 
-// Hardware RNG with source selection: RDSEED, then RDRAND, then failure.
+// RNG with source selection: RDSEED, then RDRAND, then failure.
+// If `system_fallback` is given AND the CPU supports neither instruction, the
+// operating-system generator is the (only) source instead. It is never used
+// on a CPU that has RDSEED or RDRAND, not even when their hardware fails.
 //
 // Usage pattern: create one instance per operation. The instance is NOT
 // thread-safe (it holds selection state and a one-word buffer); separate
@@ -94,7 +113,8 @@ const char* to_string(rng_state s) noexcept;
 // Satisfies the Source concept of random_core.h: `bool operator()(uint32_t&)`.
 class hardware_rng {
 public:
-    explicit hardware_rng(instruction_provider& provider, rng_policy policy = {}) noexcept;
+    explicit hardware_rng(instruction_provider& provider, rng_policy policy = {},
+                          system_rng_provider* system_fallback = nullptr) noexcept;
 
     bool next_u32(std::uint32_t& out) noexcept;
     bool next_u64(std::uint64_t& out) noexcept;
@@ -110,12 +130,15 @@ public:
     // has been produced yet). This is what status reporting should display.
     rng_source last_source() const noexcept { return m_last_source; }
 
+    // True when this CPU has neither instruction and the OS generator is the source.
+    bool using_system_rng() const noexcept { return m_use_system; }
     bool rdseed_failed() const noexcept { return m_rdseed_failed; }
     bool rdrand_failed() const noexcept { return m_rdrand_failed; }
     // Number of 64-bit hardware words consumed from each source (excluding
     // the discarded self-test words).
     std::uint64_t words_from_rdseed() const noexcept { return m_words_rdseed; }
     std::uint64_t words_from_rdrand() const noexcept { return m_words_rdrand; }
+    std::uint64_t words_from_system() const noexcept { return m_words_system; }
 
     // Human-readable account of which hardware sources supplied values.
     std::string usage_summary() const;
@@ -128,18 +151,22 @@ private:
     void update_state() noexcept;
 
     instruction_provider& m_provider;
+    system_rng_provider* m_system = nullptr;
     rng_policy m_policy;
     cpu_features m_features;
     rng_state m_state = rng_state::ready;
     bool m_rdseed_failed = false;
     bool m_rdrand_failed = false;
+    bool m_use_system = false, m_system_failed = false;
+    bool m_have_last_system = false;
+    std::uint64_t m_last_system = 0;
     bool m_have_last_rdseed = false, m_have_last_rdrand = false;
     std::uint64_t m_last_rdseed = 0, m_last_rdrand = 0;
     bool m_have_buffer = false;
     std::uint32_t m_buffer = 0;
     rng_source m_buffer_source = rng_source::none;
     rng_source m_last_source = rng_source::none;
-    std::uint64_t m_words_rdseed = 0, m_words_rdrand = 0;
+    std::uint64_t m_words_rdseed = 0, m_words_rdrand = 0, m_words_system = 0;
 };
 
 // Human-readable capability line for the running CPU, e.g.

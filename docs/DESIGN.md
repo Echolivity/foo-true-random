@@ -10,8 +10,10 @@ foobar2000/foo_true_random/   foobar2000-specific (SDK 2026-10-01)
 
 include/ftr/, src/            portable, no SDK dependency
   random_core.h               rejection sampling + Fisher–Yates (header-only templates)
-  hardware_rng.h/.cpp         RDSEED → RDRAND → fail selection, retries, health checks
+  hardware_rng.h/.cpp         RDSEED → RDRAND → fail selection, retries, health checks;
+                              the Windows RNG only on CPUs with neither instruction
   hardware_rng_x86.cpp        the only file that executes CPUID/RDSEED/RDRAND
+  system_rng.cpp              the only file that calls the OS generator (BCryptGenRandom)
   playlist_logic.h            transactional playlist operations over an abstract backend
 ```
 
@@ -116,7 +118,8 @@ is immutable after thread-safe initialization.
 
 ## Deliberate non-features
 
-No settings, no preferences page, no software fallback, no weighting, history,
+No settings, no preferences page, no software PRNG, no fallback for failing
+hardware (the Windows RNG only replaces instructions a CPU does not have), no weighting, history,
 recommendation or "smart" shuffle. Playback is never started or changed by the
 component: after a shuffle, playback order is whatever foobar2000's
 *Playback → Order* says (use *Default* to hear the shuffled order as is).

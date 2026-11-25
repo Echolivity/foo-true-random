@@ -38,6 +38,11 @@ an instruction it was told is unsupported** (on real hardware that would be
   RDRAND supplies the rest, RDSEED not retried; usage summary reports both.
 - RDRAND retry exhaustion (exactly 10 attempts) → fail closed, no further
   instruction executions.
+- Windows system RNG (mock): used on a CPU with neither instruction, with no
+  instruction executed; never called on a CPU with RDSEED, RDRAND or both,
+  not even when that hardware fails or gets stuck; a failing or stuck OS
+  generator fails closed; without a configured OS generator, a no-hardware CPU
+  still refuses.
 - Neither available → fail closed, no instructions executed, shuffle aborts.
 - Stuck source in self-test (RDSEED returning 0, RDRAND returning all-ones)
   → disqualified before use; stuck at runtime → operation aborted, no switch.
@@ -97,7 +102,11 @@ instruction it verifies the fail-closed path instead.
    - rollback against the real `playlist_manager` (insert refused; partial
      insert; exception after a partial insert) leaves no playlist behind and
      restores the active playlist;
-   - a no-hardware CPU model refuses without creating anything.
+   - a no-hardware CPU model refuses without creating anything;
+   - the same no-hardware model with the real Windows RNG (as the shipped
+     commands run it) creates a correct playlist without executing any CPU
+     instruction, and the commands use the Windows RNG if and only if the CPU
+     has neither RDSEED nor RDRAND.
 4. Writes a report and exits foobar2000; the script fails unless it ends with
    `RESULT: PASS`.
 
@@ -116,8 +125,8 @@ ctest --test-dir build-tests -C Release -V      # includes test_hardware_real on
 
 - The Sandy Bridge machine: CI uses GitHub's Azure-hosted CPUs. The Sandy
   Bridge behaviour is covered by the CPUID-decode tests (exact Sandy Bridge
-  register model) and the no-hardware paths, but has not been executed on that
-  physical machine. (The Ryzen 9 7950X3D has been checked manually, below.)
+  register model), the no-hardware paths and the real `BCryptGenRandom` on the
+  CI runner, but has not been executed on that physical machine. (The Ryzen 9 7950X3D has been checked manually, below.)
 - Entire Media Library with a populated library inside foobar2000 (CI profile
   has no library folders configured). Covered manually, see below.
 - Interactive UI checks (menu placement, popup appearance) are not automated.

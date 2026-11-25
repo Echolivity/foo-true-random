@@ -104,6 +104,7 @@
     <ClCompile Include="fb2k_backend.cpp" />
     <ClCompile Include="..\..\src\hardware_rng.cpp" />
     <ClCompile Include="..\..\src\hardware_rng_x86.cpp" />
+    <ClCompile Include="..\..\src\system_rng.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stdafx.h" />

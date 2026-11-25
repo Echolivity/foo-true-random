@@ -35,7 +35,7 @@ void report_failure(const char* what, const char* msg) {
 
 ftr::operation_result run_new_playlist(const std::vector<handle>& items, const char* kind,
                                        const char* what) {
-    ftr::hardware_rng rng(ftr::cpu_instruction_provider());
+    ftr::hardware_rng rng(ftr::cpu_instruction_provider(), {}, &ftr::os_system_rng_provider());
     playlist_manager_backend pm;
     const std::string name = std::string("True Random - ") + kind;
     const ftr::operation_result r = ftr::create_shuffled_playlist(pm, rng, items, name);
@@ -72,7 +72,7 @@ void cmd_selected_tracks(metadb_handle_list_cref data) {
 }
 
 void cmd_current_playlist() {
-    ftr::hardware_rng rng(ftr::cpu_instruction_provider());
+    ftr::hardware_rng rng(ftr::cpu_instruction_provider(), {}, &ftr::os_system_rng_provider());
     playlist_manager_backend pm;
     const ftr::operation_result r = ftr::shuffle_playlist_in_place(pm, rng, pm.active_playlist());
     report(r, "Current Playlist");
@@ -81,7 +81,7 @@ void cmd_current_playlist() {
 void cmd_status() {
     const ftr::cpuid_snapshot snap = ftr::read_cpuid_snapshot();
     const ftr::cpu_features f = ftr::decode_cpu_features(snap);
-    ftr::hardware_rng rng(ftr::cpu_instruction_provider());
+    ftr::hardware_rng rng(ftr::cpu_instruction_provider(), {}, &ftr::os_system_rng_provider());
     std::string msg;
     msg += "CPU capability (CPUID): " + ftr::describe_features(f) + "\n";
     char raw[160];
@@ -97,12 +97,20 @@ void cmd_status() {
             msg += "Hardware RNG failed while drawing a value: " + rng.failure_reason() + "\n";
         }
     } else {
-        msg += "Hardware RNG unavailable: " + rng.failure_reason() + "\n";
+        msg += "Random number generator unavailable: " + rng.failure_reason() + "\n";
     }
-    msg +=
-        "\nRandomness comes only from the CPU's RDSEED/RDRAND instructions. There is no software or "
-        "operating-system fallback. This component does not and cannot certify the quality of the "
-        "CPU's internal entropy source.";
+    if (rng.using_system_rng()) {
+        msg +=
+            "\nThis CPU has neither RDSEED nor RDRAND, so randomness comes from the Windows system random "
+            "number generator (BCryptGenRandom) instead. Shuffling is still exactly unbiased; only the "
+            "source of the random values differs. On CPUs with RDSEED or RDRAND the component never uses it.";
+    } else {
+        msg +=
+            "\nRandomness comes only from the CPU's RDSEED/RDRAND instructions; a hardware failure is refused, "
+            "never replaced by software. The Windows system random number generator is used only on CPUs "
+            "that have neither instruction. This component does not and cannot certify the quality of the "
+            "CPU's internal entropy source.";
+    }
     console::print(("foo_true_random: status: " + msg).c_str());
     popup_message::g_show(msg.c_str(), "True Random: Hardware RNG Status");
 }
@@ -151,13 +159,13 @@ public:
     bool get_description(t_uint32 p_index, pfc::string_base& p_out) override {
         switch (p_index) {
             case cmd_library:
-                p_out = "Creates a new playlist containing the entire Media Library in hardware-random order (RDSEED/RDRAND only).";
+                p_out = "Creates a new playlist containing the entire Media Library in random order (RDSEED/RDRAND; Windows RNG only on CPUs without them).";
                 return true;
             case cmd_current:
-                p_out = "Reorders the active playlist into hardware-random order (RDSEED/RDRAND only). Undoable.";
+                p_out = "Reorders the active playlist into random order (RDSEED/RDRAND; Windows RNG only on CPUs without them). Undoable.";
                 return true;
             case cmd_status_idx:
-                p_out = "Shows which hardware random-number instruction is available and in use.";
+                p_out = "Shows which random-number source is available and in use.";
                 return true;
             default: return false;
         }
@@ -210,7 +218,7 @@ public:
 
     bool get_item_description(unsigned p_index, pfc::string_base& p_out) override {
         (void)p_index;
-        p_out = "Creates a new playlist containing the selected tracks in hardware-random order (RDSEED/RDRAND only).";
+        p_out = "Creates a new playlist containing the selected tracks in random order (RDSEED/RDRAND; Windows RNG only on CPUs without them).";
         return true;
     }
 

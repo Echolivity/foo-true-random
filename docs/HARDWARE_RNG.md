@@ -2,21 +2,24 @@
 
 ## What the component uses
 
-foo-true-random takes every random bit from one of two x86 instructions:
+foo-true-random takes every random bit from one of two x86 instructions,
+or, only on a CPU that has neither, from Windows:
 
-| Priority | Instruction | Detection | Retry policy |
+| Priority | Source | Used when | Retry policy |
 |---|---|---|---|
 | 1 | `RDSEED` | `CPUID.(EAX=7, ECX=0):EBX[18]` (only read if `CPUID.0:EAX >= 7`) | up to 1024 attempts, `PAUSE` between attempts |
 | 2 | `RDRAND` | `CPUID.(EAX=1):ECX[30]` | up to 10 attempts, `PAUSE` between attempts |
-| 3 | — | — | **explicit failure** |
+| 3 | — | the CPU has RDSEED or RDRAND, but they failed | **explicit failure** |
+| — | `BCryptGenRandom` (`BCRYPT_USE_SYSTEM_PREFERRED_RNG`) | the CPU has **neither** instruction | one call per value; failure is final |
 
 The 64-bit forms (`_rdseed64_step`, `_rdrand64_step`) are used. Each 64-bit
 word supplies two 32-bit values to the shuffler.
 
-There is **no** fallback to a software PRNG, the Windows Cryptography API,
-`BCryptGenRandom`, `rand()`, `std::random_device`, or foobar2000's built-in
-shuffle. No setting can enable one. If no hardware source can deliver values,
-the operation is refused and nothing is changed.
+The Windows generator is not a fallback for failing hardware: on a CPU that
+has RDSEED or RDRAND it is never called, even if both fail. It replaces the
+instructions only on CPUs that do not have them. There is no software PRNG,
+no `rand()`, no `std::random_device` and no foobar2000 built-in shuffle, and no
+setting can enable one.
 
 ## Source selection and failure handling (per operation)
 
@@ -58,7 +61,7 @@ a cheap guard against this specific "stuck output" failure mode.
 
 | CPU | RDSEED | RDRAND | Result |
 |---|---|---|---|
-| Intel Sandy Bridge (2nd gen Core) | no | no | **Refuses** — "Hardware RNG unavailable" |
+| Intel Sandy Bridge (2nd gen Core) | no | no | Uses the **Windows system RNG** (`BCryptGenRandom`) |
 | Intel Ivy Bridge, Haswell | no | yes | Uses RDRAND |
 | Intel Broadwell and newer | yes | yes | Uses RDSEED |
 | AMD Zen 1 and newer (incl. Ryzen 9 7950X3D) | yes | yes | Uses RDSEED (expected; verify with *Hardware RNG Status*) |
@@ -67,12 +70,17 @@ Do not take this table as a substitute for runtime detection — the component
 always checks CPUID on the machine it runs on. Virtual machines may hide
 these CPUID bits even on capable hosts.
 
-The Sandy Bridge behaviour is intentional and required: under the
-hardware-only policy, a CPU without RDSEED/RDRAND cannot run the component's
-operations.
+Up to version 1.0.2, a CPU without RDSEED/RDRAND refused every operation.
+Since 1.1.0 it uses `BCryptGenRandom`, Windows' cryptographic generator, which
+needs no extra runtime and exists on every Windows version foobar2000 v2 runs
+on. The same health checks apply: 8 words are drawn and discarded first, and
+two identical consecutive 64-bit values reject the output.
 
 ## What this does and does not guarantee
 
+- On CPUs without RDSEED/RDRAND, values come from `BCryptGenRandom`. Windows
+  documents it as its cryptographically secure generator; this project relies
+  on that and does not test or certify it either.
 - RDSEED and RDRAND are CPU-provided interfaces to an on-chip random number
   generator. RDSEED is specified by the vendors as returning conditioned
   entropy-source output intended for seeding; RDRAND returns output of a

@@ -11,6 +11,11 @@ const char* to_string(rng_source s) noexcept {
     switch (s) {
         case rng_source::rdseed: return "RDSEED";
         case rng_source::rdrand: return "RDRAND";
+#if defined(_WIN32)
+        case rng_source::system: return "Windows system RNG (BCryptGenRandom)";
+#else
+        case rng_source::system: return "operating-system RNG (getrandom)";
+#endif
         case rng_source::none: break;
     }
     return "none";
@@ -54,10 +59,18 @@ std::string describe_features(const cpu_features& f) {
     return s;
 }
 
-hardware_rng::hardware_rng(instruction_provider& provider, rng_policy policy) noexcept
-    : m_provider(provider), m_policy(policy), m_features(provider.features()) {
+hardware_rng::hardware_rng(instruction_provider& provider, rng_policy policy,
+                           system_rng_provider* system_fallback) noexcept
+    : m_provider(provider), m_system(system_fallback), m_policy(policy), m_features(provider.features()) {
     if (!m_features.rdseed && !m_features.rdrand) {
-        m_state = rng_state::no_hardware;
+        if (m_system == nullptr) {
+            m_state = rng_state::no_hardware;
+            return;
+        }
+        // Neither instruction exists on this CPU: the OS generator is the only source.
+        m_use_system = true;
+        if (!self_test(rng_source::system)) m_system_failed = true;
+        update_state();
         return;
     }
     // Never execute an instruction CPUID did not report.
@@ -68,6 +81,10 @@ hardware_rng::hardware_rng(instruction_provider& provider, rng_policy policy) no
 
 void hardware_rng::update_state() noexcept {
     if (m_state == rng_state::stuck_output || m_state == rng_state::no_hardware) return;
+    if (m_use_system) {
+        m_state = m_system_failed ? rng_state::sources_exhausted : rng_state::ready;
+        return;
+    }
     const bool seed_ok = m_features.rdseed && !m_rdseed_failed;
     const bool rand_ok = m_features.rdrand && !m_rdrand_failed;
     m_state = (seed_ok || rand_ok) ? rng_state::ready : rng_state::sources_exhausted;
@@ -75,6 +92,7 @@ void hardware_rng::update_state() noexcept {
 
 rng_source hardware_rng::current_source() const noexcept {
     if (m_state != rng_state::ready) return rng_source::none;
+    if (m_use_system) return m_system_failed ? rng_source::none : rng_source::system;
     if (m_features.rdseed && !m_rdseed_failed) return rng_source::rdseed;
     if (m_features.rdrand && !m_rdrand_failed) return rng_source::rdrand;
     return rng_source::none;
@@ -95,6 +113,21 @@ bool hardware_rng::self_test(rng_source src) noexcept {
 }
 
 bool hardware_rng::draw64(rng_source src, std::uint64_t& out) noexcept {
+    if (src == rng_source::system) {
+        // Only reachable on a CPU without RDSEED/RDRAND, with a fallback provided.
+        if (!m_use_system || m_system == nullptr) return false;
+        std::uint64_t v = 0;
+        if (!m_system->random64(v)) return false;   // the OS generator does not fail transiently
+        if (m_have_last_system && m_last_system == v) {
+            m_system_failed = true;
+            m_state = rng_state::stuck_output;
+            return false;
+        }
+        m_have_last_system = true;
+        m_last_system = v;
+        out = v;
+        return true;
+    }
     const bool is_seed = (src == rng_source::rdseed);
     // Hard guard: never execute an instruction CPUID did not report.
     if (is_seed ? !m_features.rdseed : !m_features.rdrand) return false;
@@ -124,6 +157,17 @@ bool hardware_rng::draw64(rng_source src, std::uint64_t& out) noexcept {
 
 bool hardware_rng::next_u64(std::uint64_t& out) noexcept {
     if (m_state != rng_state::ready) return false;
+    if (m_use_system) {
+        if (draw64(rng_source::system, out)) {
+            m_last_source = rng_source::system;
+            ++m_words_system;
+            return true;
+        }
+        if (m_state == rng_state::stuck_output) return false;
+        m_system_failed = true;
+        update_state();
+        return false;
+    }
     if (m_features.rdseed && !m_rdseed_failed) {
         if (draw64(rng_source::rdseed, out)) {
             m_last_source = rng_source::rdseed;
@@ -169,7 +213,11 @@ bool hardware_rng::next_u32(std::uint32_t& out) noexcept {
 
 std::string hardware_rng::usage_summary() const {
     std::string s;
-    if (m_words_rdseed == 0 && m_words_rdrand == 0) return "no hardware random values drawn";
+    if (m_words_system != 0) {
+        return std::string(to_string(rng_source::system)) + " (" + std::to_string(m_words_system) +
+               " x 64-bit values; this CPU has neither RDSEED nor RDRAND)";
+    }
+    if (m_words_rdseed == 0 && m_words_rdrand == 0) return "no random values drawn";
     if (m_words_rdseed != 0) {
         s += "RDSEED (" + std::to_string(m_words_rdseed) + " x 64-bit values)";
     }
@@ -182,11 +230,21 @@ std::string hardware_rng::usage_summary() const {
 
 std::string hardware_rng::failure_reason() const {
     if (m_state == rng_state::ready) return {};
+    if (m_use_system) {
+        std::string s = m_state == rng_state::stuck_output
+                            ? "the operating-system random number generator returned identical consecutive values; output rejected"
+                            : "the operating-system random number generator failed";
+        s += ". CPU: " + describe_features(m_features) + ", so " + to_string(rng_source::system) +
+             " was the only source.";
+        return s;
+    }
     std::string s = to_string(m_state);
     s += ". CPU: " + describe_features(m_features) + ".";
     if (m_features.rdseed && m_rdseed_failed) s += " RDSEED marked unavailable.";
     if (m_features.rdrand && m_rdrand_failed) s += " RDRAND marked unavailable.";
-    s += " No software or operating-system fallback is used.";
+    s += m_system != nullptr && (m_features.rdseed || m_features.rdrand)
+             ? " The operating-system generator is only used on CPUs without RDSEED and RDRAND, so it was not used."
+             : " No software or operating-system fallback is used.";
     return s;
 }
 

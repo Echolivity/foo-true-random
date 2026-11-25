@@ -83,4 +83,13 @@ public:
     void backoff() noexcept override { ++backoffs; }
 };
 
+// Mock of the operating-system generator. Counts every call so tests can assert
+// it is never consulted on a CPU that has RDSEED or RDRAND.
+class mock_system_rng final : public ftr::system_rng_provider {
+public:
+    insn_fn fn = always_ok(99);
+    std::uint64_t calls = 0;
+    bool random64(std::uint64_t& out) noexcept override { return fn(calls++, out); }
+};
+
 }  // namespace ftr_test

@@ -12,7 +12,8 @@
 
 <p align="center">
   <b>Shuffle your music with randomness straight from your CPU's hardware RNG,<br>
-  using a mathematically unbiased algorithm. No software PRNG, no fallback.</b>
+  using a mathematically unbiased algorithm. No software PRNG.<br>
+  Older CPUs without a hardware RNG use the Windows system generator instead.</b>
 </p>
 
 <p align="center">
@@ -52,14 +53,14 @@ foo_true_random: Current Playlist: Randomized 23 tracks in the current playlist 
    Double-clicking the file also works.
 3. Check it works with **Edit → True Random: Hardware RNG Status**.
 
-**Requirements:** foobar2000 **v2.x 64-bit** on Windows, and a CPU with `RDSEED` or `RDRAND`.
+**Requirements:** foobar2000 **v2.x 64-bit** on Windows. Nothing else: any 64-bit CPU works.
 
-| CPU | RDSEED | RDRAND | Works? |
+| CPU | RDSEED | RDRAND | Random source |
 |---|:---:|:---:|---|
-| Intel 5th gen (Broadwell) and newer | ✅ | ✅ | ✅ uses **RDSEED** |
-| Intel 3rd–4th gen (Ivy Bridge, Haswell) | — | ✅ | ✅ uses **RDRAND** |
-| Intel 2nd gen (Sandy Bridge) and older | — | — | ❌ refuses safely by design |
-| AMD Ryzen (all generations) | ✅ | ✅ | ✅ uses **RDSEED** |
+| Intel 5th gen (Broadwell) and newer | ✅ | ✅ | **RDSEED** |
+| Intel 3rd–4th gen (Ivy Bridge, Haswell) | — | ✅ | **RDRAND** |
+| Intel 2nd gen (Sandy Bridge) and older | — | — | **Windows system RNG** (`BCryptGenRandom`) |
+| AMD Ryzen (all generations) | ✅ | ✅ | **RDSEED** |
 
 The component always checks the actual CPU at runtime. The table is a guide, not an assumption.
 
@@ -70,16 +71,17 @@ flowchart LR
     A["🎵 Tracks"] --> B{"CPUID check"}
     B -- "RDSEED ✓" --> C["RDSEED<br/>(preferred)"]
     B -- "RDRAND only" --> D["RDRAND<br/>(fallback)"]
-    B -- "neither" --> X["⛔ Refuse<br/>nothing changes"]
+    B -- "neither" --> W["Windows system RNG<br/>(BCryptGenRandom)"]
     C -- "retries exhausted" --> D
-    D -- "retries exhausted" --> X
+    D -- "retries exhausted" --> X["⛔ Refuse<br/>nothing changes"]
     C --> E["Rejection sampling<br/>no modulo bias"]
     D --> E
+    W --> E
     E --> F["Fisher–Yates<br/>full permutation in memory"]
     F --> G["✅ Apply to playlist<br/>in one step"]
 ```
 
-1. **Hardware only.** Random bits come from the CPU's `RDSEED` instruction, or `RDRAND` if RDSEED isn't available. There is no OS RNG, no `std::random_device` and no foobar2000 shuffle, not even as a hidden fallback.
+1. **Hardware first.** Random bits come from the CPU's `RDSEED` instruction, or `RDRAND` if RDSEED isn't available. If the CPU has these instructions but they fail, the operation is refused: a hardware fault is never papered over with software. Only on a CPU that has **neither** instruction (Intel Sandy Bridge and older) does the component use the Windows system random number generator, `BCryptGenRandom`, and it says so in the console and in *Hardware RNG Status*. There is no software PRNG, no `std::random_device` and no foobar2000 shuffle.
 2. **No modulo bias.** Each pick in `[0, n)` discards raw values below `2³² mod n` before reducing, so every outcome is exactly equally likely.
 3. **Unbiased shuffle.** Fisher–Yates: `for i = n-1 … 1: swap(a[i], a[random(0..i)])`. Every order of your playlist is equally likely.
 4. **Fail safe.** The whole new order is computed *before* foobar2000 is touched, so a hardware RNG failure changes nothing. If adding tracks to a new playlist fails, or an error occurs part-way, the incomplete playlist is removed and your previous active playlist is restored. This is a clean-up after failure, not an atomic transaction: other components may briefly see the new playlist. If the playlist list was changed by something else meanwhile, nothing is removed blindly; you're told to delete the leftover playlist yourself.
@@ -91,7 +93,8 @@ flowchart LR
 | Every possible order is equally likely | Exhaustive proofs in the test suite: every input value, every permutation counted, not sampled |
 | Each track appears exactly once; duplicates are kept | Unit tests plus checks inside a real foobar2000 |
 | Unsupported instructions are never executed | Mock CPU tests that fail if an unavailable instruction is ever called |
-| Hardware failure never falls back to software | Tests for RDSEED exhaustion → RDRAND → refusal, and for "stuck" output |
+| Hardware failure never falls back to software | Tests for RDSEED exhaustion → RDRAND → refusal, and for "stuck" output, with the Windows RNG available and never called |
+| The Windows RNG is used only on CPUs with neither instruction | Mock tests for every CPU combination, plus a check inside a real foobar2000 |
 | Failed operations leave no partial playlists | Failure-injection tests (refused, partial, and exception mid-insert), including against foobar2000's real playlist manager |
 | Clean-up never deletes one of your playlists | Tests where another component changes the playlist list mid-operation: nothing is removed |
 | Undo restores the exact previous order | Verified through foobar2000's own undo in CI |
@@ -116,15 +119,15 @@ Set **Playback → Order → Default**, run *True Random: Current Playlist*, the
 </details>
 
 <details>
-<summary><b>My PC says "hardware RNG unavailable". Can I enable a software fallback?</b></summary>
+<summary><b>Does it work on an older CPU without RDSEED/RDRAND?</b></summary>
 
-No, on purpose. Without RDSEED/RDRAND the component refuses rather than quietly using something else. This affects only quite old CPUs, such as Intel Sandy Bridge (2nd gen Core, 2011).
+Yes, since version 1.1.0. CPUs without either instruction, such as Intel Sandy Bridge (2nd gen Core, 2011), use the Windows system random number generator (`BCryptGenRandom`) instead. The shuffle is exactly as unbiased; only the source of the random values differs. *Hardware RNG Status* and the console say which source was used. On a CPU that does have RDSEED or RDRAND, the Windows generator is never used, not even when the hardware fails.
 </details>
 
 <details>
 <summary><b>Is this "true" randomness?</b></summary>
 
-RDSEED and RDRAND are CPU interfaces to an on-chip hardware random number generator. This project doesn't access raw physical noise and can't certify the quality of the CPU's entropy source; no software can. What it *does* guarantee, with proof, is that the hardware's random values are turned into playlist orders without any bias. More in [docs/HARDWARE_RNG.md](docs/HARDWARE_RNG.md).
+RDSEED and RDRAND are CPU interfaces to an on-chip hardware random number generator. This project doesn't access raw physical noise and can't certify the quality of the CPU's entropy source; no software can. On CPUs without them, the values come from Windows' cryptographic random number generator. What it *does* guarantee, with proof, is that the hardware's random values are turned into playlist orders without any bias. More in [docs/HARDWARE_RNG.md](docs/HARDWARE_RNG.md).
 </details>
 
 <details>
